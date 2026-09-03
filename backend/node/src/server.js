@@ -1,15 +1,30 @@
-﻿'use strict';
+'use strict';
 /**
- * server.js – HTTP server entry point (stub)
+ * server.js – HTTP server entry point.
  *
- * Reads PORT from environment (default 3001) and starts the Express app.
- * TODO (Phase 3): Add MongoDB connection before listen().
+ * Connects to MongoDB, then starts the Express app. If Mongo is unreachable,
+ * the server still starts (so /health stays up for orchestration probes) but
+ * logs a warning, since every webhook route will fail without a DB.
  */
 
 const app = require('./app');
+const config = require('./config');
+const { connectDB } = require('./config/db');
 
-const PORT = process.env.PORT || 3001;
+async function start() {
+  try {
+    await connectDB();
+    console.log('[GigSave] Connected to MongoDB');
+  } catch (err) {
+    console.error(
+      '[GigSave] MongoDB connection failed; webhook routes will error until it is reachable:',
+      err.message
+    );
+  }
 
-app.listen(PORT, () => {
-  console.log(`[GigSave] Node backend listening on port ${PORT}`);
-});
+  app.listen(config.port, () => {
+    console.log(`[GigSave] Node backend listening on port ${config.port}`);
+  });
+}
+
+start();

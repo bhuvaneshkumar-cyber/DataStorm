@@ -55,8 +55,6 @@ def add_transaction(
             "reason": decision.reason,
         },
     }
-
-
 def execute_sweep(
     db: Session,
     user_id: Union[str, uuid.UUID],
@@ -226,5 +224,3 @@ def get_user_dashboard_stats(db: Session, user_id: Union[str, uuid.UUID]) -> dic
             for s in sweeps
         ],
     }
-
-

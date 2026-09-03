@@ -521,6 +521,74 @@ async function processContribution({
   }
 }
 
+// ============================================================================
+// § 7  authorizeManualSweep — admin/test trigger, mirrors savings.py's
+//      SavingsEngine.authorize_sweep(): re-check the ALREADY-accumulated
+//      pendingContributions against threshold + mandate cap, with no new
+//      transaction event driving it.
+// ============================================================================
+
+/**
+ * Manually re-evaluates a user's pending contributions and sweeps them into
+ * the stash if eligible. Used by POST /webhooks/sweep for admin/test flows
+ * where a sweep needs to be forced outside the normal webhook-driven path.
+ *
+ * @param {string} userId
+ * @returns {Promise<{ success: boolean, swept: boolean, sweptAmount: number,
+ *   newBalance: number, pendingAfter: number, reason: string, wasCapped: boolean }>}
+ */
+async function authorizeManualSweep(userId) {
+  try {
+    const stash = await SavingsStash.findOne({ userId });
+    if (!stash) {
+      return _fail(`No SavingsStash found for userId=${userId}.`);
+    }
+
+    const pending = stash.pendingContributions;
+    const thresholdMet = meetsMinimumThreshold(pending, stash.minimumThreshold);
+    const { approvedAmount, wasCapped } = enforceMandateCap(pending, stash.mandateCap);
+    const sweepAuthorised = thresholdMet && !wasCapped;
+
+    if (!sweepAuthorised) {
+      return {
+        success: true,
+        swept: false,
+        sweptAmount: 0,
+        newBalance: stash.currentBalance,
+        pendingAfter: pending,
+        reason: thresholdMet ? 'mandate limit exceeded' : 'minimum threshold not reached',
+        wasCapped,
+      };
+    }
+
+    const newBalance = Math.round((stash.currentBalance + approvedAmount) * 100) / 100;
+
+    await SavingsStash.findOneAndUpdate(
+      { userId },
+      {
+        $set: { pendingContributions: 0, currentBalance: newBalance, lastSweepDate: new Date() },
+        $push: {
+          sweepHistory: { amount: approvedAmount, date: new Date(), type: 'combined', triggeringTransactionId: null },
+        },
+      },
+      { new: true }
+    );
+
+    return {
+      success: true,
+      swept: true,
+      sweptAmount: approvedAmount,
+      newBalance,
+      pendingAfter: 0,
+      reason: 'UPI AutoPay sweep authorized',
+      wasCapped: false,
+    };
+  } catch (err) {
+    console.error('[savingsEngine] authorizeManualSweep error:', err);
+    return _fail(`Unexpected error: ${err.message}`);
+  }
+}
+
 // ── Private helper ────────────────────────────────────────────────────────────
 
 /**
@@ -551,6 +619,7 @@ module.exports = {
   enforceMandateCap,
   meetsMinimumThreshold,
   processContribution,
+  authorizeManualSweep,
 
   // Export internal helper so it can be unit-tested directly.
   _computeMovingAverage: computeMovingAverage,

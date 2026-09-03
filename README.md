@@ -9,6 +9,7 @@ Prototype implementation for the gig-worker resilience savings workflow. AltCred
 - `backend/test_savings.py`: unit tests for calculations, event processing, thresholds, and authorization
 - `backend/requirements.txt`: explicit no-dependency Python service baseline
 - `ml_service/`: FastAPI hybrid credit-scoring service (rules 40% + RandomForest 60%, SHAP explanations)
+- `backend/node/`: Express + MongoDB port of the savings engine, with HMAC-verified webhook ingestion
 
 ## Current Workflow
 
@@ -51,6 +52,7 @@ Pinned for Python 3.11/3.12 - `scikit-learn` and `numpy` 1.26 have no 3.14 wheel
 ```powershell
 python -m unittest discover -s backend -p "test_*.py"
 .venv_ml\Scripts\python -m pytest ml_service -q
+cd backend/node && npm install && npm test
 ```
 
-The prototype deliberately leaves provider adapters, NestJS HTTP endpoints, PostgreSQL persistence, signed webhook verification, mTLS termination, encrypted secrets, and native mobile screens as the next integration layer. The calculation and event-orchestration boundary is tested and ready to be called by those adapters.
+The prototype deliberately leaves real bank/platform provider adapters, mTLS termination, an OAuth 2.0 gateway, encrypted secrets storage, and native mobile screens as the next integration layer — see `checkpoint.md` for the current status and what's left. The calculation and event-orchestration boundary (`backend/savings.py` and its Node port `backend/node/src/services/savingsEngine.js`) is tested and wired up end-to-end: `backend/node` now has a real Express server with an HMAC-verified `/webhooks/transaction` and `/webhooks/sweep`, backed by MongoDB via Mongoose.

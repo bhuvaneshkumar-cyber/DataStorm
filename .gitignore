@@ -6,3 +6,5 @@ __pycache__/
 !.env.example
 node_modules/
 .venv_ml/
+frontend/dashboard/dist/
+DataStorm-test-branch/

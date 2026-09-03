@@ -1,7 +1,7 @@
-﻿{
+{
   "name": "gigsave-backend-node",
   "version": "0.1.0",
-  "description": "GigSave Node.js backend – Phase 3 savings engine port",
+  "description": "GigSave Node.js backend - Phase 3 savings engine port",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

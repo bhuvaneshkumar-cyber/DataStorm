@@ -1,0 +1,10 @@
+# Pinned for Python 3.11+ / Docker reproducibility.
+# numpy is held at 1.26.x: shap 0.46 ships wheels built against the 1.x ABI,
+# and mixing it with numpy 2.x is the usual source of "resolution" pain.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+numpy==1.26.4
+pandas==2.2.3
+scikit-learn==1.5.2
+shap==0.46.0

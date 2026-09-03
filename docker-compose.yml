@@ -13,3 +13,34 @@ services:
     volumes:
       - ./backend:/app/backend
     restart: unless-stopped
+
+  ml_service:
+    build:
+      context: .
+      dockerfile: ml_service/Dockerfile
+    container_name: datastrom_ml_service
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./ml_service:/app
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend/dashboard
+      dockerfile: Dockerfile
+    container_name: datastrom_frontend
+    ports:
+      - "5173:5173"
+    environment:
+      # Resolved in the browser, not inside the container network — must be
+      # host-reachable URLs, not Docker service names.
+      - VITE_BACKEND_URL=http://localhost:8000
+      - VITE_ML_URL=http://localhost:8001
+    volumes:
+      - ./frontend/dashboard:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+      - ml_service
+    restart: unless-stopped

@@ -1,10 +1,12 @@
 """FastAPI service: hybrid (rules + RandomForest) gig-worker credit scoring."""
 
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from model_pipeline import CreditModelPipeline
 from schemas import CreditScoreRequest, CreditScoreResponse
@@ -32,6 +34,16 @@ app = FastAPI(
     version="1.0.0",
     description="Hybrid rule + ML credit scoring with SHAP explanations.",
     lifespan=lifespan,
+)
+
+# Hackathon MVP: wide open, same as backend/main.py. Frontend calls this
+# service directly (VITE_ML_URL), so it needs its own CORS, not just the backend's.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -72,4 +84,5 @@ def predict_credit_score(payload: CreditScoreRequest) -> CreditScoreResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # Distinct default port: backend/main.py already owns 8000.
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8001)), reload=True)

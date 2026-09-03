@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { financialDataAdapter, type RecentSweep } from '@/data/financial-data';
+import { fetchCreditScore, fetchDashboard } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 
 /* ------------------------------------------------------------------ */
@@ -194,6 +195,7 @@ function Home() {
 
   const [stash, setStash] = useState(snapshot.stash.amount);
   const [sweeps, setSweeps] = useState<RecentSweep[]>(snapshot.recentSweeps);
+  const [credit, setCredit] = useState(snapshot.credit);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [applied, setApplied] = useState(false);
@@ -215,6 +217,47 @@ function Home() {
     const timer = window.setTimeout(() => setToast(null), 3200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  // Pull live data from backend + ml_service where available; on any failure
+  // (service down, no demo user seeded) keep the local demo snapshot as-is —
+  // this UI is designed to look complete either way.
+  useEffect(() => {
+    fetchDashboard()
+      .then((data) => {
+        if (!data) return;
+        setStash(data.total_stash_balance);
+        setSweeps(
+          data.recent_sweeps.map((s) => ({
+            id: s.id,
+            source: s.reason,
+            sourceType: 'freelance',
+            date: s.created_at ? new Date(s.created_at).toLocaleDateString() : '',
+            amount: s.sweep_amount,
+            status: 'Completed',
+          })),
+        );
+      })
+      .catch(() => {});
+
+    fetchCreditScore({
+      age: 29,
+      primary_gig_platform: 'Ride-Hailing',
+      platform_customer_rating: 4.7,
+      completed_gigs_per_week: 62,
+      average_weekly_payout: 9200,
+      payout_volatility_index: 0.18,
+      active_platform_hours_per_week: 44,
+      resilience_stash_balance: snapshot.stash.amount,
+    })
+      .then((score) =>
+        setCredit((current) => ({
+          ...current,
+          score: Math.round(score.final_score),
+          label: score.category,
+        })),
+      )
+      .catch(() => {});
+  }, []);
 
   const announce = (message: string) => setToast(message);
 
@@ -469,14 +512,14 @@ function Home() {
                   <div className="score-layout">
                     <div
                       className="score-ring"
-                      aria-label={`Credit score ${snapshot.credit.score} out of 1000`}
+                      aria-label={`Credit score ${credit.score} out of 800`}
                     >
                       <div className="score-inside">
                         <div className="score-number" data-testid="text-credit-score">
-                          {snapshot.credit.score}
+                          {credit.score}
                         </div>
-                        <div className="score-outof">out of 1000</div>
-                        <div className="score-good">{snapshot.credit.label}</div>
+                        <div className="score-outof">out of 800</div>
+                        <div className="score-good">{credit.label}</div>
                       </div>
                     </div>
                     <div className="score-factors">

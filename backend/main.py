@@ -1,38 +1,63 @@
-"""FastAPI app: transaction ingestion, sweep ledger, and dashboard aggregates.
+"""FastAPI application assembly.
 
-Thin HTTP layer only — all persistence and calculation lives in db_service.py
-and savings.py, so this module stays readable as the API contract itself.
+Deliberately thin. Every route lives in `routers/`, every calculation in a pure
+module beside it, so this file stays readable as what it is: the list of things
+the service is made of, plus the two cross-cutting concerns (CORS and the
+database-fault handler) that cannot live in any one router.
 """
 
 import logging
-import uuid
-from typing import Optional
+import os
+from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
 
-import db_service
-from database import check_db_connection, get_db
+import bootstrap
+import scoring_client
+from database import check_db_connection
+from routers import ALL_ROUTERS
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
+)
 logger = logging.getLogger(__name__)
 
-VALID_TRANSACTION_TYPES = ("debit", "platform_payout")
+# Wide open by default so the dashboard can call from any dev host. Set
+# CORS_ORIGINS to a comma-separated allowlist before this faces the internet:
+# with credentials enabled, "*" is exactly what you do not want in production.
+_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+
+# Recorded at startup and reported through /health, so a deployment that came up
+# against a stale schema says so instead of failing one route at a time.
+_schema_state: dict = {"status": "pending"}
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Syncs the schema on the way up, releases the scorer's pool on the way down."""
+    global _schema_state
+    _schema_state = bootstrap.sync_schema()
+    yield
+    scoring_client.close_client()
+
 
 app = FastAPI(
     title="DataStrom Financial Engine API",
-    description="Backend service for Gig worker micro-savings sweeps connected to Supabase PostgreSQL",
-    version="1.0.0",
+    description=(
+        "Gig-worker financial resilience: expense tracking, platform-backed income "
+        "proof, alternative credit scoring, emergency loans, tax estimates and the "
+        "credit-policy bot. Backed by Supabase PostgreSQL."
+    ),
+    version="2.0.0",
+    lifespan=lifespan,
 )
 
-# Hackathon MVP: wide open so the dashboard and mobile clients can call directly.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -53,24 +78,11 @@ async def handle_database_error(_request: Request, exc: SQLAlchemyError) -> JSON
     )
 
 
-# Pydantic Schemas
-class TransactionCreate(BaseModel):
-    user_id: uuid.UUID
-    amount: float = Field(..., gt=0, description="Transaction amount in rupees")
-    transaction_type: str = Field(..., description="'debit' or 'platform_payout'")
-    merchant: Optional[str] = None
-    threshold: Optional[float] = Field(100.0, gt=0)
-    mandate_limit: Optional[float] = Field(1000.0, gt=0)
+for router in ALL_ROUTERS:
+    app.include_router(router)
 
 
-class SweepCreate(BaseModel):
-    user_id: uuid.UUID
-    sweep_amount: float = Field(..., gt=0)
-    transaction_id: Optional[uuid.UUID] = None
-    reason: Optional[str] = "UPI AutoPay sweep authorized"
-
-
-@app.get("/")
+@app.get("/", tags=["meta"])
 def read_root() -> dict:
     return {
         "service": "DataStrom Financial Engine API",
@@ -79,9 +91,14 @@ def read_root() -> dict:
     }
 
 
-@app.get("/health")
+@app.get("/health", tags=["meta"])
 def health_check() -> JSONResponse:
-    """Liveness plus a live Supabase PostgreSQL connection probe."""
+    """Liveness, the live database probe, the schema state, and the scorer.
+
+    The scoring service is reported but does not decide this service's health:
+    most routes work without it, and marking the whole backend unhealthy because
+    a dependency is down would take a working deployment out of a load balancer.
+    """
     db_status = check_db_connection()
     healthy = db_status.get("status") == "connected"
     return JSONResponse(
@@ -89,73 +106,10 @@ def health_check() -> JSONResponse:
         content={
             "service_status": "healthy" if healthy else "degraded",
             "database": db_status,
+            "schema_sync": _schema_state,
+            "scoring_service": scoring_client.health(),
         },
     )
-
-
-@app.get("/api/transactions")
-def list_transactions(
-    user_id: Optional[uuid.UUID] = None,
-    limit: int = Query(50, gt=0, le=500, description="Max records to return."),
-    db: Session = Depends(get_db),
-) -> list[dict]:
-    """Fetches transaction records from Supabase."""
-    return db_service.get_transactions(db, user_id=user_id, limit=limit)
-
-
-@app.post("/api/transactions", status_code=status.HTTP_201_CREATED)
-def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)) -> dict:
-    """Ingests bank debits / platform payouts and evaluates savings sweep eligibility."""
-    if payload.transaction_type not in VALID_TRANSACTION_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"transaction_type must be one of: {', '.join(VALID_TRANSACTION_TYPES)}",
-        )
-
-    return db_service.add_transaction(
-        db=db,
-        user_id=payload.user_id,
-        amount=payload.amount,
-        transaction_type=payload.transaction_type,
-        merchant=payload.merchant,
-        threshold=payload.threshold,
-        mandate_limit=payload.mandate_limit,
-    )
-
-
-@app.get("/api/sweeps")
-def list_sweeps(
-    user_id: Optional[uuid.UUID] = None,
-    limit: int = Query(50, gt=0, le=500, description="Max records to return."),
-    db: Session = Depends(get_db),
-) -> list[dict]:
-    """Fetches savings sweep records from Supabase."""
-    return db_service.get_sweeps(db, user_id=user_id, limit=limit)
-
-
-@app.post("/api/sweeps", status_code=status.HTTP_201_CREATED)
-def authorize_sweep(payload: SweepCreate, db: Session = Depends(get_db)) -> dict:
-    """Records an authorized savings sweep into the savings_sweeps ledger."""
-    sweep = db_service.execute_sweep(
-        db=db,
-        user_id=payload.user_id,
-        sweep_amount=payload.sweep_amount,
-        transaction_id=payload.transaction_id,
-        reason=payload.reason,
-    )
-    return {
-        "sweep_id": str(sweep.id),
-        "user_id": str(sweep.user_id),
-        "sweep_amount": float(sweep.sweep_amount),
-        "reason": sweep.reason,
-        "created_at": sweep.created_at,
-    }
-
-
-@app.get("/api/users/{user_id}/dashboard")
-def get_dashboard(user_id: uuid.UUID, db: Session = Depends(get_db)) -> dict:
-    """Returns total savings stash, 30-day baseline income, and recent sweep records."""
-    return db_service.get_user_dashboard_stats(db, user_id=user_id)
 
 
 if __name__ == "__main__":

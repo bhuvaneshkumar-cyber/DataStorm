@@ -184,3 +184,103 @@ class StatementScoreResponse(BaseModel):
         description="Per-metric breakdown from the statement ledger. Null when the "
         "statement had no usable date column and no ledger could be built.",
     )
+
+
+# --------------------------------------------------------------------------- #
+# Micro-insurance advice
+# --------------------------------------------------------------------------- #
+
+
+class InsuranceRequest(BaseModel):
+    """One worker's risk picture. Everything but the score has a safe default."""
+
+    credit_score: float = Field(..., ge=0.0, le=800.0)
+    employment_type: Optional[str] = Field(
+        None, description="Free text; matched against exposure profiles by keyword."
+    )
+    risk_tier: Optional[RiskTier] = Field(
+        None, description="Overrides the tier derived from the score, if already known."
+    )
+    average_weekly_payout: float = Field(0.0, ge=0.0)
+    resilience_stash_balance: float = Field(0.0, ge=0.0)
+    active_platform_hours_per_week: int = Field(40, ge=0, le=120)
+    payout_volatility_index: float = Field(0.5, ge=0.0, le=1.0)
+    age: int = Field(30, ge=18, le=75)
+
+
+class InsuranceOption(BaseModel):
+    """One kind of cover, why it ranked where it did, and what it costs."""
+
+    code: str
+    title: str
+    description: str
+    priority: float = Field(..., ge=0.0, le=1.0)
+    urgency: Literal["essential", "recommended", "optional"]
+    reasons: list[str]
+    indicative_monthly_premium_inr: Optional[list[float]] = Field(
+        None, description="Low and high rupee estimate. Null when no income is known."
+    )
+    premium_pct_of_weekly_payout: list[float]
+
+
+class InsuranceRecommendation(BaseModel):
+    employment_type: Optional[str] = None
+    matched_exposure_profile: str
+    risk_tier: RiskTier
+    credit_score: float
+    savings_runway_weeks: float
+    recommendations: list[InsuranceOption]
+    notes: list[str]
+
+
+# --------------------------------------------------------------------------- #
+# Corporate financial statements
+# --------------------------------------------------------------------------- #
+
+MetricSource = Literal["reported", "derived", "estimated", "unavailable"]
+
+
+class FinancialMetric(BaseModel):
+    """One figure, and an audit trail for how it was arrived at."""
+
+    name: str
+    value: Optional[float] = Field(None, description="Null means unknown, never zero.")
+    source: MetricSource
+    basis: str
+
+
+class FinancialAnalysisResponse(BaseModel):
+    """Headline figures and ratios from a set of accounts, or an estimate of them."""
+
+    source_format: Optional[str] = None
+    extraction_method: Optional[str] = None
+    reporting_scale: str = Field(..., description="rupees, thousand, lakh, million or crore.")
+    scale_multiplier: float
+    metrics: dict[str, FinancialMetric]
+    ratios: dict[str, FinancialMetric]
+    unresolved: list[str] = Field(
+        default_factory=list, description="Figures the document could not support."
+    )
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class BankRow(BaseModel):
+    """One bank line, in estimation mode. Narration is what classifies it."""
+
+    type: Literal["credit", "debit"]
+    amount: float = Field(..., ge=0.0)
+    description: Optional[str] = None
+    category: Optional[str] = None
+
+
+class FinancialEstimateRequest(BaseModel):
+    """Estimate accounts from GSTR-3B turnover and bank flows, with no report."""
+
+    gst_taxable_turnover: Optional[float] = Field(
+        None, ge=0.0, description="Outward taxable turnover for the period, from GSTR-3B."
+    )
+    bank_rows: list[BankRow] = Field(default_factory=list)
+    period_months: float = Field(
+        ..., gt=0, le=60, description="Months the supplied data covers, for annualisation."
+    )

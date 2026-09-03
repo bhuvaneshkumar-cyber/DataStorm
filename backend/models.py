@@ -7,13 +7,27 @@ connected, and what credit they have applied for.
 Every table's `id` is a UUID generated client-side by SQLAlchemy rather than by
 a database default, so a row has its identity before it is flushed and the
 service is not tied to a Postgres-specific `gen_random_uuid()`.
+
+The dialect-neutral `Uuid` type is used rather than the postgresql-specific one:
+it still renders a native UUID column on Postgres, and it lets the API suite run
+the whole stack against in-memory SQLite instead of needing a live database to
+test an authorization rule.
 """
 
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Numeric, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    String,
+    Text,
+    Uuid,
+)
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -48,7 +62,7 @@ class User(Base):
     __tablename__ = "users"
     __table_args__ = {"extend_existing": True}
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     name = Column(String, nullable=True)
     email = Column(String, unique=True, index=True, nullable=True)
     phone = Column(String, nullable=True)
@@ -91,8 +105,8 @@ class TransactionRecord(Base):
     __tablename__ = "transactions"
     __table_args__ = {"extend_existing": True}
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
     amount = Column(Numeric, nullable=False)
     transaction_type = Column(String, nullable=False)  # "debit" or "platform_payout"
     merchant = Column(String, nullable=True)
@@ -111,10 +125,10 @@ class SavingsSweepRecord(Base):
     __tablename__ = "savings_sweeps"
     __table_args__ = {"extend_existing": True}
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
     transaction_id = Column(
-        UUID(as_uuid=True), ForeignKey("transactions.id"), nullable=True, index=True
+        Uuid(as_uuid=True), ForeignKey("transactions.id"), nullable=True, index=True
     )
     sweep_amount = Column(Numeric, nullable=False)
     reason = Column(Text, nullable=True)
@@ -135,8 +149,8 @@ class PlatformAccount(Base):
     __tablename__ = "platform_accounts"
     __table_args__ = {"extend_existing": True}
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     # Free text so a new platform needs no migration; the credit request maps it
     # onto one of the scoring service's four categories at call time.
     platform = Column(String, nullable=False)
@@ -163,8 +177,8 @@ class LoanApplication(Base):
     __tablename__ = "loan_applications"
     __table_args__ = {"extend_existing": True}
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    user_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     amount = Column(Numeric, nullable=False)
     tenor_months = Column(Numeric, nullable=False)
     purpose = Column(String, nullable=True)
@@ -177,7 +191,7 @@ class LoanApplication(Base):
     engine_decision = Column(String, nullable=True)  # APPROVE / REFER / DECLINE
 
     status = Column(String, nullable=False, default=LOAN_PENDING)
-    lender_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    lender_id = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
     lender_note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utcnow)
     decided_at = Column(DateTime, nullable=True)

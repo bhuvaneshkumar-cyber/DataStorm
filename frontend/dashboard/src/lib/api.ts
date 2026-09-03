@@ -1,349 +1,277 @@
 /**
- * DataStorm Financial Engine API Client.
+ * Every endpoint this app calls, one function each, grouped by area.
  *
- * Base URLs come from Vite env vars with localhost fallbacks for development.
+ * Nothing here does anything but name a route and its types: the transport,
+ * the token and the error handling all live in `client.ts`. That split is what
+ * keeps this file readable as the API surface, and it means a change to how
+ * requests are made touches one file rather than forty call sites.
  */
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000';
-const ML_URL = import.meta.env.VITE_ML_URL ?? 'http://localhost:8001';
+import { backend, scoring } from './client';
+import type {
+  AuthResponse,
+  BankRow,
+  BotAnswer,
+  DashboardStats,
+  ExpenseSummary,
+  FinancialAnalysis,
+  IncomeProfile,
+  InsuranceResponse,
+  LoanApplication,
+  LoanEligibility,
+  LoanStatus,
+  MetricAnalysis,
+  PlatformAccount,
+  PlatformAccountInput,
+  ProfileUpdate,
+  RegisterPayload,
+  Role,
+  ScoredProfile,
+  ScoringHealth,
+  StatementScore,
+  Sweep,
+  TaxSummary,
+  Transaction,
+  TransactionCreated,
+  TransactionType,
+  UserProfile,
+} from './types';
 
-// ---------------------------------------------------------------------------
-// Shared Types
-// ---------------------------------------------------------------------------
+/* ------------------------------------------------------------------ */
+/*  Authentication                                                    */
+/* ------------------------------------------------------------------ */
 
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-  phone?: string;
-  role: 'worker' | 'lender';
-  language: string;
-  employment_type?: string;
-}
+export const auth = {
+  register: (payload: RegisterPayload) =>
+    backend<AuthResponse>('/api/auth/register', {
+      method: 'POST',
+      body: payload,
+      auth: false,
+      fallback: 'Could not create your account',
+    }),
 
-export interface Transaction {
-  id: string;
-  timestamp: string;
-  amount: number;
-  transaction_type: 'debit' | 'platform_payout';
-  merchant?: string;
-  category?: string;
-}
+  /**
+   * `expectedRole` pins a sign-in to one side of the product, so a worker who
+   * lands on the lender portal is told plainly rather than being signed in to
+   * a dashboard with nothing on it.
+   */
+  login: (email: string, password: string, expectedRole?: Role) =>
+    backend<AuthResponse>('/api/auth/login', {
+      method: 'POST',
+      body: { email, password, expected_role: expectedRole },
+      auth: false,
+      fallback: 'Could not sign you in',
+    }),
 
-export interface ExpenseSummary {
-  total_income: number;
-  total_expense: number;
-  net: number;
-}
+  me: () => backend<UserProfile>('/api/auth/me', { fallback: 'Could not load your profile' }),
 
-export interface Sweep {
-  id: string;
-  sweep_amount: number;
-  reason: string;
-  created_at: string;
-}
+  updateProfile: (changes: ProfileUpdate) =>
+    backend<UserProfile>('/api/auth/me', {
+      method: 'PATCH',
+      body: changes,
+      fallback: 'Could not save your profile',
+    }),
+};
 
-export interface PlatformAccount {
-  id: string;
-  platform: string;
-  account_handle?: string;
-  customer_rating?: number;
-  weekly_payout?: number;
-  gigs_per_week?: number;
-  hours_per_week?: number;
-  verified: boolean;
-}
+/* ------------------------------------------------------------------ */
+/*  Money                                                             */
+/* ------------------------------------------------------------------ */
 
-export interface CreditProfile {
-  final_score: number;
-  category: string;
-  assumptions?: string[];
-}
+export const money = {
+  dashboard: () => backend<DashboardStats>('/api/dashboard', { fallback: 'Could not load your dashboard' }),
 
-export interface LoanEligibility {
-  eligible: boolean;
-  max_amount_inr?: number;
-  max_tenor_months?: number;
-  indicative_interest_rate_pct?: number;
-  reason?: string;
-}
+  transactions: (limit = 50) =>
+    backend<Transaction[]>(`/api/transactions?limit=${limit}`, {
+      fallback: 'Could not load your transactions',
+    }),
 
-export interface LoanApplication {
-  id: string;
-  amount: number;
-  tenor_months: number;
-  purpose?: string;
-  status: 'pending' | 'approved' | 'rejected';
-  credit_score?: number;
-  risk_grade?: string;
-  engine_decision?: string;
-  applicant_name?: string;
-}
+  logTransaction: (payload: {
+    amount: number;
+    transaction_type: TransactionType;
+    merchant?: string;
+    category?: string;
+  }) =>
+    backend<TransactionCreated>('/api/transactions', {
+      method: 'POST',
+      body: payload,
+      fallback: 'Could not save that entry',
+    }),
 
-export interface InsuranceRecommendation {
-  product_name: string;
-  priority: string;
-  description: string;
-  estimated_premium: number;
-  primary_benefit: string;
-}
+  expenseSummary: (windowDays = 90) =>
+    backend<ExpenseSummary>(`/api/expenses/summary?window_days=${windowDays}`, {
+      fallback: 'Could not load your cash flow',
+    }),
 
-export interface TaxSummary {
-  total_tax: number;
-  financial_year: string;
-  annualised_gross_income: number;
-  taxable_income: number;
-  monthly_set_aside: number;
-  notes?: string[];
-  gst_registration_required: boolean;
-}
+  authorizeSweep: (sweepAmount: number, reason?: string) =>
+    backend<Sweep>('/api/sweeps', {
+      method: 'POST',
+      body: { sweep_amount: sweepAmount, reason },
+      fallback: 'Could not authorize that sweep',
+    }),
+};
 
-export interface DashboardData {
-  total_stash_balance: number;
-  income_30d_baseline: number;
-  volatility_index?: number;
-  recent_sweeps: Sweep[];
-}
+/* ------------------------------------------------------------------ */
+/*  Platforms                                                         */
+/* ------------------------------------------------------------------ */
 
-// ---------------------------------------------------------------------------
-// Internal HTTP helper
-// ---------------------------------------------------------------------------
+export const platforms = {
+  list: () => backend<PlatformAccount[]>('/api/platforms', { fallback: 'Could not load your platforms' }),
 
-async function request<T = unknown>(url: string, options: RequestInit = {}): Promise<T> {
-  const token = localStorage.getItem('auth_token');
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(options.headers as Record<string, string>),
-  };
+  connect: (payload: PlatformAccountInput) =>
+    backend<PlatformAccount>('/api/platforms', {
+      method: 'POST',
+      body: payload,
+      fallback: 'Could not connect that platform',
+    }),
 
-  const res = await fetch(url, { ...options, headers });
+  disconnect: (id: string) =>
+    backend<void>(`/api/platforms/${id}`, {
+      method: 'DELETE',
+      fallback: 'Could not disconnect that platform',
+    }),
 
-  if (res.status === 401) {
-    localStorage.removeItem('auth_token');
-    window.location.href = '/login';
-    // Never resolves after redirect — casting keeps TypeScript happy.
-    return new Promise<never>(() => undefined);
-  }
+  incomeProfile: () =>
+    backend<IncomeProfile>('/api/platforms/income-profile', {
+      fallback: 'Could not build your income profile',
+    }),
+};
 
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { detail?: string };
-    throw new Error(body.detail ?? `Request failed with status ${res.status}`);
-  }
+/* ------------------------------------------------------------------ */
+/*  Credit                                                            */
+/* ------------------------------------------------------------------ */
 
-  return res.json() as Promise<T>;
-}
+export const credit = {
+  /** Derived server-side from connected platforms and the logged ledger. */
+  score: () => backend<ScoredProfile>('/api/credit/score', { fallback: 'Could not calculate your score' }),
 
-// ---------------------------------------------------------------------------
-// Auth
-// ---------------------------------------------------------------------------
+  /** Per-metric breakdown of the transactions already logged in the app. */
+  metrics: () =>
+    backend<MetricAnalysis>('/api/credit/metrics', {
+      fallback: 'Could not analyse your transactions',
+    }),
 
-export interface AuthResponse {
-  access_token: string;
-  expires_in_hours: number;
-  user: User;
-}
+  /**
+   * Uploads a statement straight to the scoring service rather than through the
+   * backend: the document never needs to exist in two places, and the scoring
+   * service deletes it before it answers.
+   */
+  analyzeStatement: (
+    file: File,
+    overrides: Partial<{
+      age: number;
+      platform_customer_rating: number;
+      active_platform_hours_per_week: number;
+      primary_gig_platform: string;
+    }> = {},
+    signal?: AbortSignal,
+  ) => {
+    const form = new FormData();
+    form.append('file', file);
+    for (const [key, value] of Object.entries(overrides)) {
+      if (value !== undefined && value !== null && value !== '') form.append(key, String(value));
+    }
+    return scoring<StatementScore>('/analyze-statement', {
+      method: 'POST',
+      form,
+      auth: false,
+      fallback: 'Could not read that statement',
+      signal,
+    });
+  },
+};
 
-export async function register(data: {
-  name: string;
-  email: string;
-  password: string;
-  phone?: string;
-  role: string;
-  language: string;
-  employment_type?: string;
-}): Promise<AuthResponse> {
-  const res = await request<AuthResponse>(`${BACKEND_URL}/api/auth/register`, {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-  localStorage.setItem('auth_token', res.access_token);
-  return res;
-}
+/* ------------------------------------------------------------------ */
+/*  Corporate financials                                              */
+/* ------------------------------------------------------------------ */
 
-export async function login(data: {
-  email: string;
-  password: string;
-  expected_role?: string;
-}): Promise<AuthResponse> {
-  const res = await request<AuthResponse>(`${BACKEND_URL}/api/auth/login`, {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-  localStorage.setItem('auth_token', res.access_token);
-  return res;
-}
+export const financials = {
+  analyzeDocument: (file: File, signal?: AbortSignal) => {
+    const form = new FormData();
+    form.append('file', file);
+    return scoring<FinancialAnalysis>('/analyze-financials', {
+      method: 'POST',
+      form,
+      auth: false,
+      fallback: 'Could not read those accounts',
+      signal,
+    });
+  },
 
-export async function getProfile(): Promise<User> {
-  return request<User>(`${BACKEND_URL}/api/auth/me`);
-}
+  estimate: (payload: {
+    gst_taxable_turnover?: number | null;
+    bank_rows: BankRow[];
+    period_months: number;
+  }) =>
+    scoring<FinancialAnalysis>('/estimate-financials', {
+      method: 'POST',
+      body: payload,
+      auth: false,
+      fallback: 'Could not build an estimate',
+    }),
+};
 
-export async function updateProfile(data: Partial<Pick<User, 'name' | 'phone' | 'language'>>): Promise<User> {
-  return request<User>(`${BACKEND_URL}/api/auth/me`, {
-    method: 'PATCH',
-    body: JSON.stringify(data),
-  });
-}
+/* ------------------------------------------------------------------ */
+/*  Insurance, loans, tax, bot                                        */
+/* ------------------------------------------------------------------ */
 
-// ---------------------------------------------------------------------------
-// Transactions & Expenses
-// ---------------------------------------------------------------------------
+export const insurance = {
+  recommendations: () =>
+    backend<InsuranceResponse>('/api/insurance/recommendations', {
+      fallback: 'Could not build an insurance recommendation',
+    }),
+};
 
-export async function fetchTransactions(): Promise<Transaction[]> {
-  return request<Transaction[]>(`${BACKEND_URL}/api/transactions`);
-}
+export const loans = {
+  eligibility: () =>
+    backend<LoanEligibility>('/api/loans/eligibility', {
+      fallback: 'Could not check your eligibility',
+    }),
 
-export async function createTransaction(data: {
-  amount: number;
-  transaction_type: string;
-  merchant?: string;
-  category?: string;
-}): Promise<Transaction> {
-  return request<Transaction>(`${BACKEND_URL}/api/transactions`, {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-}
+  mine: () => backend<LoanApplication[]>('/api/loans', { fallback: 'Could not load your applications' }),
 
-export async function fetchExpenseSummary(windowDays = 90): Promise<ExpenseSummary> {
-  return request<ExpenseSummary>(`${BACKEND_URL}/api/transactions/summary?window_days=${windowDays}`);
-}
+  apply: (payload: { amount: number; tenor_months: number; purpose?: string }) =>
+    backend<LoanApplication>('/api/loans', {
+      method: 'POST',
+      body: payload,
+      fallback: 'Could not submit your application',
+    }),
 
-export async function fetchSweeps(): Promise<Sweep[]> {
-  return request<Sweep[]>(`${BACKEND_URL}/api/transactions/sweeps`);
-}
+  queue: (status?: LoanStatus) =>
+    backend<LoanApplication[]>(`/api/loans/queue${status ? `?status=${status}` : ''}`, {
+      fallback: 'Could not load the application queue',
+    }),
 
-export async function authorizeSweep(data: {
-  sweep_amount: number;
-  reason?: string;
-}): Promise<Sweep> {
-  return request<Sweep>(`${BACKEND_URL}/api/transactions/sweeps`, {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-}
+  decide: (id: string, status: 'approved' | 'rejected', lenderNote?: string) =>
+    backend<LoanApplication>(`/api/loans/${id}`, {
+      method: 'PATCH',
+      body: { status, lender_note: lenderNote },
+      fallback: 'Could not record that decision',
+    }),
+};
 
-// ---------------------------------------------------------------------------
-// Platforms
-// ---------------------------------------------------------------------------
+export const tax = {
+  summary: (options: { deductions?: number; presumptive?: boolean } = {}) => {
+    const params = new URLSearchParams();
+    if (options.deductions !== undefined) params.set('deductions', String(options.deductions));
+    if (options.presumptive !== undefined) params.set('presumptive', String(options.presumptive));
+    const query = params.toString();
+    return backend<TaxSummary>(`/api/tax/summary${query ? `?${query}` : ''}`, {
+      fallback: 'Could not estimate your tax',
+    });
+  },
+};
 
-export async function fetchPlatforms(): Promise<PlatformAccount[]> {
-  return request<PlatformAccount[]>(`${BACKEND_URL}/api/platforms`);
-}
+export const bot = {
+  topics: () => backend<string[]>('/api/policy-bot/topics', { fallback: 'Could not load bot topics' }),
 
-export async function fetchDashboard(): Promise<DashboardData> {
-  return request<DashboardData>(`${BACKEND_URL}/api/dashboard`);
-}
+  ask: (question: string, language: string) =>
+    backend<BotAnswer>('/api/policy-bot/ask', {
+      method: 'POST',
+      body: { question, language },
+      fallback: 'Could not answer that',
+    }),
+};
 
-export async function connectPlatform(data: {
-  platform: string;
-  account_handle?: string;
-  customer_rating?: number;
-  weekly_payout?: number;
-  gigs_per_week?: number;
-  hours_per_week?: number;
-}): Promise<PlatformAccount> {
-  return request<PlatformAccount>(`${BACKEND_URL}/api/platforms`, {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-}
-
-export async function disconnectPlatform(id: string): Promise<void> {
-  return request<void>(`${BACKEND_URL}/api/platforms/${id}`, {
-    method: 'DELETE',
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Credit
-// ---------------------------------------------------------------------------
-
-export async function fetchMyCreditProfile(): Promise<CreditProfile> {
-  return request<CreditProfile>(`${BACKEND_URL}/api/credit/score`);
-}
-
-export async function analyzeStatement(file: File, overrides: Record<string, unknown> = {}): Promise<{ score: CreditProfile }> {
-  const formData = new FormData();
-  formData.append('file', file);
-  for (const [k, v] of Object.entries(overrides)) {
-    if (v !== undefined && v !== null) formData.append(k, String(v));
-  }
-
-  const res = await fetch(`${ML_URL}/analyze-statement`, {
-    method: 'POST',
-    body: formData,
-  });
-  if (!res.ok) throw new Error('Statement analysis failed');
-  return res.json() as Promise<{ score: CreditProfile }>;
-}
-
-// ---------------------------------------------------------------------------
-// Loans
-// ---------------------------------------------------------------------------
-
-export async function checkLoanEligibility(): Promise<LoanEligibility> {
-  return request<LoanEligibility>(`${BACKEND_URL}/api/loans/eligibility`);
-}
-
-export async function applyForLoan(data: {
-  amount: number;
-  tenor_months: number;
-  purpose?: string;
-}): Promise<LoanApplication> {
-  return request<LoanApplication>(`${BACKEND_URL}/api/loans/apply`, {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-}
-
-export async function fetchMyLoans(): Promise<LoanApplication[]> {
-  return request<LoanApplication[]>(`${BACKEND_URL}/api/loans/my-applications`);
-}
-
-export async function fetchPendingLoans(): Promise<LoanApplication[]> {
-  return request<LoanApplication[]>(`${BACKEND_URL}/api/loans/review`);
-}
-
-export async function decideLoan(appId: string, decision: { status: 'approved' | 'rejected'; lender_note?: string }): Promise<LoanApplication> {
-  return request<LoanApplication>(`${BACKEND_URL}/api/loans/${appId}/decision`, {
-    method: 'PATCH',
-    body: JSON.stringify(decision),
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Insurance
-// ---------------------------------------------------------------------------
-
-export async function fetchInsuranceRecs(): Promise<InsuranceRecommendation[]> {
-  return request<InsuranceRecommendation[]>(`${BACKEND_URL}/api/insurance/recommend`);
-}
-
-// ---------------------------------------------------------------------------
-// Tax
-// ---------------------------------------------------------------------------
-
-export async function fetchTaxSummary(): Promise<TaxSummary> {
-  return request<TaxSummary>(`${BACKEND_URL}/api/tax/summary`);
-}
-
-// ---------------------------------------------------------------------------
-// Bot
-// ---------------------------------------------------------------------------
-
-export interface BotResponse {
-  answer: string;
-  confident: boolean;
-}
-
-export async function askBot(question: string, lang = 'en'): Promise<BotResponse> {
-  return request<BotResponse>(`${BACKEND_URL}/api/bot/ask`, {
-    method: 'POST',
-    body: JSON.stringify({ question, language: lang }),
-  });
-}
-
-export async function fetchBotTopics(): Promise<{ topics: string[] }> {
-  return request<{ topics: string[] }>(`${BACKEND_URL}/api/bot/topics`);
-}
+export const health = {
+  scoring: () => scoring<ScoringHealth>('/health', { auth: false, fallback: 'Scoring service is unreachable' }),
+};

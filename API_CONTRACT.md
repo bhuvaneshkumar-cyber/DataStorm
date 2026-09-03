@@ -1,403 +1,330 @@
-# DataStrom Financial Engine API Contract
+# DataStrom Financial Engine — API Contract
 
-This document provides the integration contract for connecting Frontend and Mobile clients (Teammates 3 & 4) to the Python backend and live Supabase PostgreSQL database.
+Two services. The **financial engine** (`:8000`) owns identity and everything
+persisted about a person; the **scoring service** (`:8001`) owns the models and
+the document parsers and holds no user data at all.
 
----
-
-## 1. Overview & Connection Info
-
-* **Base URL (Local Development):** `http://localhost:8000`
-* **Interactive API Documentation (Swagger):** `http://localhost:8000/docs`
-* **Alternative API Documentation (ReDoc):** `http://localhost:8000/redoc`
-* **Authentication:** No client API keys or authorization headers required for hackathon MVP endpoints.
-* **CORS Status:** **Enabled** (`allow_origins=["*"]`, all methods and headers allowed). Frontend web apps can call the API directly without CORS proxy issues.
+The dashboard talks to both: the engine for everything account-shaped, the
+scorer directly for file uploads so a statement never has to exist in two
+places.
 
 ---
 
-## 2. Supported vs. Unsupported Operations
+## 1. Connection
 
-| Operation | Supported? | Method & Endpoint | Description |
-| :--- | :---: | :--- | :--- |
-| **Check Backend Health** | **YES** | `GET /health` | Live connection test to Supabase PostgreSQL |
-| **Fetch Transactions** | **YES** | `GET /api/transactions` | Query recent user debits and payouts |
-| **Ingest Transaction** | **YES** | `POST /api/transactions` | Record transaction and calculate sweep decision |
-| **Fetch Sweeps** | **YES** | `GET /api/sweeps` | Query authorized/executed savings sweeps |
-| **Authorize/Create Sweep** | **YES** | `POST /api/sweeps` | Insert an authorized sweep record |
-| **Fetch User Dashboard** | **YES** | `GET /api/users/{user_id}/dashboard` | Total stash balance, 30d baseline income, recent sweeps |
-| **Update Transaction** | **NO** | *N/A* | *Currently not implemented* |
-| **Update Sweep** | **NO** | *N/A* | *Currently not implemented* |
+| | Financial engine | Scoring service |
+|---|---|---|
+| Default base URL | `http://localhost:8000` | `http://localhost:8001` |
+| Interactive docs | `/docs` | `/docs` |
+| Health | `GET /health` | `GET /health` |
+| Auth | Bearer JWT on every `/api/*` route | none (stateless, holds nothing) |
+| Persistence | Supabase PostgreSQL | none |
+
+The engine also calls the scorer server-to-server (`ML_SERVICE_URL`). That is
+deliberate: **a credit score is never accepted from the browser.** Anything a
+loan is granted against is derived on the server from the applicant's own
+recorded evidence.
 
 ---
 
-## 3. Endpoint Specifications
+## 2. Authentication
 
-### 3.1 `GET /health`
-Validates that the API server is operational and actively connected to Supabase PostgreSQL.
+Register or sign in, then send `Authorization: Bearer <access_token>` on every
+subsequent request. Tokens are HS256, signed with `JWT_SECRET`, and expire after
+`JWT_TTL_HOURS` (default 12).
 
-* **Method:** `GET`
-* **URL:** `/health`
-* **Query Parameters:** None
-* **Success Response (`200 OK`):**
-```json
+One credential store serves both audiences, separated by `role`:
+
+| Role | Reaches |
+|---|---|
+| `worker` | transactions, sweeps, platforms, credit, loans, insurance, tax |
+| `lender` | the loan queue and the decision route |
+
+Both reach `/api/auth/*` and `/api/policy-bot/*`. Cross-role access is `403`,
+not `404`: the caller is authenticated and the route exists, they are simply on
+the wrong side of the product. `role` is fixed at registration and cannot be
+changed through the API.
+
+### `POST /api/auth/register` → `201`
+
+```jsonc
 {
-  "service_status": "healthy",
-  "database": {
-    "status": "connected",
-    "result": 1,
-    "database_url_configured": true
-  }
+  "name": "Meena S",
+  "email": "meena@example.com",
+  "password": "at-least-8-characters",
+  "role": "worker",              // or "lender"; defaults to worker
+  "language": "ta",              // en | hi | ta
+  "phone": "9876543210",         // optional
+  "employment_type": "Swiggy delivery partner",  // optional, drives insurance advice
+  "date_of_birth": "1996-05-14"  // optional; without it the score assumes age 30
 }
 ```
-* **Failure Response (`503 Service Unavailable`):**
-```json
+
+Returns `{ access_token, token_type, expires_in_hours, user }`. `409` if the
+email is taken.
+
+### `POST /api/auth/login`
+
+`{ email, password, expected_role? }`. `expected_role` pins the request to one
+door, so a worker signing in at the lender portal gets a clear `403` rather than
+an empty dashboard.
+
+A wrong password and an unknown email return the **same** `401` message, so the
+form cannot be used to enumerate accounts.
+
+### `GET /api/auth/me` · `PATCH /api/auth/me`
+
+Read or update the caller's own profile. The patch accepts `name`, `phone`,
+`language`, `employment_type`, `date_of_birth` — and silently ignores anything
+else, including `role`.
+
+---
+
+## 3. Money (worker)
+
+### `GET /api/transactions?limit=50`
+
+The caller's own rows, newest first. Never anyone else's.
+
+### `POST /api/transactions` → `201`
+
+```jsonc
 {
-  "service_status": "degraded",
-  "database": {
-    "status": "error",
-    "error": "Connection error details",
-    "database_url_configured": true
-  }
+  "amount": 132.0,
+  "transaction_type": "debit",   // or "platform_payout"
+  "merchant": "HP Petrol",       // optional
+  "category": "Fuel",            // optional; drives the expense breakdown only
+  "threshold": 100.0,            // optional, minimum sweep size
+  "mandate_limit": 1000.0        // optional, UPI AutoPay cap
 }
 ```
 
----
+Returns the row plus the sweep it *would* trigger:
 
-### 3.2 `GET /api/transactions`
-Fetches a list of historical bank transactions and payouts.
-
-* **Method:** `GET`
-* **URL:** `/api/transactions`
-* **Query Parameters:**
-  * `user_id` *(optional, UUID string)*: Filter transactions for a specific user.
-  * `limit` *(optional, integer, default: 50)*: Number of records to return.
-* **Success Response (`200 OK`):**
-```json
-[
-  {
-    "id": "4c744655-6ddf-4cdf-96e2-5b777345af90",
-    "user_id": "c666bc75-751c-4e4b-866b-af5b0393d131",
-    "amount": 97.0,
-    "transaction_type": "UPI",
-    "merchant": "Amazon",
-    "status": "completed",
-    "timestamp": "2026-09-03T12:34:29.386935"
-  }
-]
-```
-
----
-
-### 3.3 `POST /api/transactions`
-Ingests a bank transaction (debit or platform payout), runs it through the deterministic `SavingsEngine`, and returns the calculation decision.
-
-* **Method:** `POST`
-* **URL:** `/api/transactions`
-* **Headers:** `Content-Type: application/json`
-* **Request Body:**
-```json
+```jsonc
 {
-  "user_id": "c666bc75-751c-4e4b-866b-af5b0393d131",
+  "transaction_id": "…",
   "amount": 132.0,
   "transaction_type": "debit",
-  "merchant": "Swiggy",
-  "threshold": 100.0,
-  "mandate_limit": 1000.0
+  "sweep_decision": { "amount": 18.0, "eligible": false, "reason": "minimum threshold not reached" }
 }
 ```
-* **Success Response (`201 Created`):**
-```json
+
+The sweep is **advised, not executed**. Money leaving an account is never a side
+effect of recording that it arrived; authorizing is a separate call.
+
+### `GET /api/expenses/summary?window_days=90`
+
+Everything the expense tracker charts, aggregated server-side so the tax and
+credit paths quote the same numbers:
+
+```jsonc
 {
-  "transaction_id": "5992405a-c7b8-4c35-be43-e427b11cd071",
-  "amount": 132.0,
-  "transaction_type": "debit",
-  "sweep_decision": {
-    "amount": 18.0,
-    "eligible": false,
-    "reason": "minimum threshold not reached"
-  }
+  "window_days": 90,
+  "total_income": 112800.0, "total_expense": 23520.0, "net": 89280.0,
+  "daily":   [{ "period": "2026-03-15", "income": 9000, "expense": 1960, "net": 7040 }],
+  "monthly": [{ "period": "2026-03",    "income": 9000, "expense": 1960, "net": 7040 }],
+  "expense_categories": [{ "category": "Fuel", "total": 15840, "share_pct": 67.3 }],
+  "income_sources":     [{ "category": "Swiggy", "total": 112800, "share_pct": 100.0 }],
+  "transaction_count": 37
 }
 ```
-* **Validation Error (`400 Bad Request`):**
-```json
-{
-  "detail": "transaction_type must be 'debit' or 'platform_payout'"
-}
-```
+
+Rows with no timestamp are excluded from both the totals and the series, so the
+two can never disagree.
+
+### `GET /api/sweeps?limit=50` · `POST /api/sweeps` → `201`
+
+`{ "sweep_amount": 118.0, "transaction_id": null, "reason": "…" }`
+
+### `GET /api/dashboard`
+
+`{ user_id, total_stash_balance, income_30d_baseline, recent_sweeps[] }` for the
+caller. (The old `/api/users/{user_id}/dashboard` is **gone** — a user id in the
+path is an invitation to read someone else's finances by editing the URL.)
 
 ---
 
-### 3.4 `GET /api/sweeps`
-Fetches a list of authorized or executed savings sweeps.
+## 4. Platforms (worker)
 
-* **Method:** `GET`
-* **URL:** `/api/sweeps`
-* **Query Parameters:**
-  * `user_id` *(optional, UUID string)*: Filter sweeps for a specific user.
-  * `limit` *(optional, integer, default: 50)*: Number of records to return.
-* **Success Response (`200 OK`):**
-```json
-[
-  {
-    "id": "518450a1-3e3b-4063-a56f-b5152a5ed2e5",
-    "user_id": "c666bc75-751c-4e4b-866b-af5b0393d131",
-    "transaction_id": "4c744655-6ddf-4cdf-96e2-5b777345af90",
-    "sweep_amount": 3.0,
-    "reason": "Round-up savings",
-    "created_at": "2026-09-03T12:38:18.328005"
-  }
-]
+Connecting a platform is how "I drive for Uber" becomes evidence a lender can
+price.
+
+| Route | Does |
+|---|---|
+| `GET /api/platforms` | the caller's connections |
+| `POST /api/platforms` → `201` | connect one; `409` if already connected (case-insensitive) |
+| `PATCH /api/platforms/{id}` | revise its figures |
+| `DELETE /api/platforms/{id}` → `204` | disconnect; `404` for a row that is not yours |
+| `GET /api/platforms/income-profile` | the eight scored features, derived |
+
+Body: `{ platform, account_handle?, customer_rating?, weekly_payout?, gigs_per_week?, hours_per_week? }`.
+A connection starts `verified: false` — the figures are a declaration until a
+logged payout corroborates them.
+
+`income-profile` collapses connections *plus* the logged ledger into what the
+scorer wants, and names every value that fell back to a default:
+
+```jsonc
+{
+  "primary_gig_platform": "Food Delivery",
+  "platform_customer_rating": 4.8,
+  "average_weekly_payout": 9400.0,
+  "completed_gigs_per_week": 58,
+  "active_platform_hours_per_week": 44,
+  "payout_volatility_index": 0.11,
+  "resilience_stash_balance": 25000.0,
+  "age": 30,
+  "connected_platforms": 1, "verified_platforms": 0,
+  "assumptions": ["No date of birth on file; age assumed to be 30."]
+}
 ```
+
+**Measured beats declared:** if the ledger can support a figure, it wins over the
+number typed into a connection form.
 
 ---
 
-### 3.5 `POST /api/sweeps`
-Records an authorized savings sweep directly in the database.
+## 5. Credit (worker)
 
-* **Method:** `POST`
-* **URL:** `/api/sweeps`
-* **Headers:** `Content-Type: application/json`
-* **Request Body:**
-```json
-{
-  "user_id": "c666bc75-751c-4e4b-866b-af5b0393d131",
-  "sweep_amount": 18.0,
-  "transaction_id": "5992405a-c7b8-4c35-be43-e427b11cd071",
-  "reason": "UPI AutoPay sweep authorized"
-}
-```
-* **Success Response (`201 Created`):**
-```json
-{
-  "sweep_id": "f339fee2-7deb-45e8-b1cb-5cf456fefc12",
-  "user_id": "c666bc75-751c-4e4b-866b-af5b0393d131",
-  "sweep_amount": 18.0,
-  "reason": "UPI AutoPay sweep authorized",
-  "created_at": "2026-09-03T14:37:44.123456"
-}
-```
+### `GET /api/credit/score`
+
+`{ profile, score }` — the income profile above, and the hybrid score derived
+from it. `503` if the scoring service is unreachable: an approximate score would
+end up written onto a loan application as though it were an assessment.
+
+### `GET /api/credit/metrics`
+
+The per-metric breakdown of the caller's own logged ledger — the same analysis a
+statement upload produces, without needing a statement. `422` when there are no
+dated transactions yet.
+
+### Statement upload
+
+Goes **straight to the scoring service** (§8), not through the engine.
 
 ---
 
-### 3.6 `GET /api/users/{user_id}/dashboard`
-Aggregates user savings summary for instant mobile/frontend dashboard rendering.
+## 6. Loans
 
-* **Method:** `GET`
-* **URL:** `/api/users/{user_id}/dashboard`
-* **Path Parameters:**
-  * `user_id` *(required, UUID string)*: The unique ID of the user.
-* **Success Response (`200 OK`):**
-```json
-{
-  "user_id": "c666bc75-751c-4e4b-866b-af5b0393d131",
-  "total_stash_balance": 3.0,
-  "income_30d_baseline": 0.0,
-  "recent_sweeps": [
-    {
-      "id": "518450a1-3e3b-4063-a56f-b5152a5ed2e5",
-      "sweep_amount": 3.0,
-      "reason": "Round-up savings",
-      "transaction_id": "4c744655-6ddf-4cdf-96e2-5b777345af90",
-      "created_at": "2026-09-03T12:38:18.328005"
-    }
-  ]
-}
-```
+### Worker
 
----
+| Route | Does |
+|---|---|
+| `GET /api/loans/eligibility` | may I apply, and on what terms |
+| `GET /api/loans` | my applications, newest first |
+| `POST /api/loans` → `201` | apply |
 
-## 4. Scoring Service (separate process, port 8001)
+`POST` takes **only** `{ amount, tenor_months, purpose? }`. The score is derived
+server-side and frozen onto the row; a body that could name its own score could
+name 800.
 
-The credit-scoring service runs alongside the financial engine on its own port
-with its own CORS, because the browser calls it directly (`VITE_ML_URL`).
+- `409` — an application is already awaiting a decision.
+- `422` — the terms are not available (below threshold, over the ceiling, tenor
+  too long). Well-formed request, permitted caller, unavailable terms.
 
-* **Base URL (Local Development):** `http://localhost:8001`
-* **Swagger:** `http://localhost:8001/docs`
+Eligibility is answerable *before* the form appears, so someone below the
+threshold reads why rather than collecting a rejection.
 
-| Operation | Method & Endpoint | Description |
-| :--- | :--- | :--- |
-| **Service health** | `GET /health` | Model status plus which document formats this deployment can parse |
-| **Score an applicant** | `POST /predict-credit-score` | Hybrid rule + ML score, SHAP drivers, and a risk assessment |
-| **Score a statement** | `POST /analyze-statement` | Upload a statement, derive features, score the result |
-| **Score a ledger** | `POST /analyze-transactions` | Per-metric breakdown and coaching from raw transactions |
+### Lender
 
-### 4.1 `POST /predict-credit-score`
+| Route | Does |
+|---|---|
+| `GET /api/loans/queue?status=pending` | the queue, **oldest first** |
+| `PATCH /api/loans/{id}` | `{ status: "approved" \| "rejected", lender_note? }` |
 
-Body is the 8 gig features (see `ml_service/schemas.py`). The response adds a
-`risk_assessment` object to the existing score fields — this is **additive**,
-so existing clients that ignore it keep working:
-
-```json
-{
-  "final_score": 664.12,
-  "category": "Good",
-  "confidence": 0.87,
-  "rule_score": 725.0,
-  "ml_score": 623.53,
-  "ml_available": true,
-  "explanation": [{ "feature": "resilience_stash_balance", "impact": 0.14, "direction": "positive" }],
-  "risk_assessment": {
-    "risk_grade": { "code": "GS-1", "label": "Minimal Risk" },
-    "risk_tier": "MODERATE",
-    "decision": "APPROVE",
-    "indicative_interest_rate_pct": 17.5,
-    "risk_premium_bps": 350,
-    "max_credit_limit_inr": 79672.0,
-    "recommended_tenor_months": 12,
-    "conditions": ["Quarterly re-verification of platform payout statements"],
-    "early_warning_signals": []
-  },
-  "latency_ms": 12.4
-}
-```
-
-`decision` is bound to the same thresholds as `category`: `Good` maps to
-APPROVE, `Standard` to REFER, `Poor` to DECLINE.
-
-### 4.2 `POST /analyze-statement`
-
-* **Content-Type:** `multipart/form-data`
-* **Fields:**
-  * `file` *(required)*: the statement. `.pdf`, `.csv`, `.xlsx`, `.xls`, `.xlsm`, `.docx`, `.doc`, `.txt`. Max 25 MB.
-  * `age`, `platform_customer_rating`, `active_platform_hours_per_week`, `primary_gig_platform` *(all optional)*: facts a statement cannot contain, or overrides for what was inferred.
-
-* **Success Response (`200 OK`):**
-```json
-{
-  "statement_analysis": {
-    "source_format": "csv",
-    "extraction_method": null,
-    "derived_features": {
-      "average_weekly_payout": 4425.0,
-      "completed_gigs_per_week": 1,
-      "payout_volatility_index": 0.037,
-      "resilience_stash_balance": 17200.0,
-      "primary_gig_platform": "Food Delivery"
-    },
-    "supplied_features": {
-      "age": { "value": 31, "source": "caller" },
-      "active_platform_hours_per_week": { "value": 40, "source": "default" }
-    },
-    "unresolved_features": ["age", "platform_customer_rating", "active_platform_hours_per_week"],
-    "evidence": {
-      "columns_detected": { "credit": "Credit", "debit": "Debit", "balance": "Closing Balance", "date": "Txn Date", "narration": "Narration" },
-      "payout_rows": 5,
-      "total_credited": 17700.0,
-      "statement_days": 28,
-      "period_start": "2026-01-01",
-      "period_end": "2026-01-28",
-      "weeks_observed": 5
-    },
-    "warnings": []
-  },
-  "features_used": { "...": "the full CreditScoreRequest that was scored" },
-  "score": { "...": "same shape as POST /predict-credit-score" }
-}
-```
-
-* **Error responses:**
-
-| Status | Meaning |
-| :---: | :--- |
-| `400` | The uploaded file is empty |
-| `413` | File exceeds the 25 MB limit |
-| `415` | Unsupported file extension |
-| `422` | Parsed, but no transaction table / no credit column / no positive credits |
-| `503` | The parser for this format is not installed in this deployment (check `GET /health`) |
-
-The response also carries a `metric_analysis` block (same shape as §4.3). It is
-`null` when the statement had no usable date column, since a ledger cannot be
-built without dates — the feature score is still returned, and the reason
-appears in `statement_analysis.warnings`.
+A lender sees the score, its grade, the indicative rate, the amount and tenor,
+and the applicant's name — **never the raw statement or transaction list.** The
+score shown is the one frozen at application time, so a later drift cannot
+rewrite the basis of a decision. Deciding twice is `409`.
 
 ---
 
-### 4.3 `POST /analyze-transactions`
+## 7. Insurance, tax, and the policy bot
 
-Scores a raw ledger and explains it metric by metric. Source-agnostic: bank
-rows, platform payout feeds and manual entries all score through this path once
-expressed as standardized transactions.
+| Route | Does |
+|---|---|
+| `GET /api/insurance/recommendations` | cover ranked by this worker's real exposures |
+| `GET /api/tax/summary?presumptive=true&deductions=0` | estimated liability from logged income |
+| `GET /api/policy-bot/topics` | what the bot can answer |
+| `POST /api/policy-bot/ask` | `{ question, language }` → an answer, or an honest "I don't know" |
 
-* **Headers:** `Content-Type: application/json`
-* **Request Body:**
-```json
-{
-  "transactions": [
-    { "date": "2026-03-02", "type": "credit", "amount": 780.5, "category": "swiggy", "source": "platform" },
-    { "date": "2026-03-05", "type": "debit",  "amount": 7000.0, "category": "rent",   "source": "manual" }
-  ],
-  "platform_rating": 4.2,
-  "opening_balance": 12000
-}
-```
-  * `transactions` *(required, ≥1)*: `date` is ISO `YYYY-MM-DD`; `type` is `credit` or `debit`; `amount` is non-negative.
-  * `platform_rating` *(optional, 1.0-5.0)*: used for gig stability; falls back to length of earning history.
-  * `opening_balance` *(optional)*: balance before the first row. Without it the liquidity metrics measure cumulative net cash flow, which understates anyone who started the period with money.
+The tax figure is an estimate annualised from the days observed, assuming a
+resident individual under 60 on the new regime with section 44AD presumptive
+taxation. It is not a filing and not advice; `notes[]` says so and lists every
+assumption.
 
-* **Success Response (`200 OK`):**
-```json
-{
-  "credit_score": 673.4,
-  "composite_score": 84.18,
-  "category_scores": {
-    "income_quality": 74.5,
-    "spending_behavior": 92.0,
-    "liquidity": 100.0,
-    "gig_stability": 70.0
-  },
-  "category_weights": { "income_quality": 35, "spending_behavior": 30, "liquidity": 20, "gig_stability": 15 },
-  "metrics": {
-    "avg_monthly_income": {
-      "name": "avg_monthly_income",
-      "value": 18787.54,
-      "score": 40.0,
-      "status": "Low Income",
-      "description": "Average monthly credits. Raw earning capacity."
-    }
-  },
-  "strengths": ["Liquidity is strong (100/100)"],
-  "weaknesses": [],
-  "recommended_actions": ["Add a second platform so one deactivation cannot end all income."],
-  "coverage": {
-    "transactions": 81, "credits": 78, "debits": 3,
-    "months_observed": 3, "period_start": "2026-03-02", "period_end": "2026-05-30"
-  },
-  "risk_grade": { "code": "GS-1", "label": "Minimal Risk" }
-}
-```
-
-`credit_score` is on the same 0-800 scale as `/predict-credit-score`, and
-`risk_grade` comes from the same `risk_policy` bands, so the two paths can never
-disagree about what a score means. Pricing is deliberately absent here: it needs
-applicant facts (age, rating, hours) that a ledger does not contain.
-
-* **Error responses:**
-
-| Status | Meaning |
-| :---: | :--- |
-| `422` | Empty ledger, or a row with a bad date, type or amount — the message names the row index |
+The bot answers from a curated policy base, not a language model. Every number
+it quotes matches the code that enforces it. Below a confidence threshold it
+returns `confident: false` with suggested topics rather than guessing.
 
 ---
 
-## 5. Instructions for Teammates 3 & 4
+## 8. Scoring service (`:8001`)
 
-1. **How to run backend locally for frontend testing:**
-   ```powershell
-   cd backend
-   python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
-   ```
-2. **Calling from Frontend (JavaScript Fetch example):**
-   ```javascript
-   const API_BASE = "http://localhost:8000";
+Stateless and unauthenticated. Holds no user data; uploaded files are deleted
+before the response returns.
 
-   // Fetch dashboard data
-   async function loadDashboard(userId) {
-     const response = await fetch(`${API_BASE}/api/users/${userId}/dashboard`);
-     const data = await response.json();
-     console.log("Stash Balance:", data.total_stash_balance);
-     return data;
-   }
-   ```
-3. **Data Types & Conventions:**
-   * All IDs (`user_id`, `transaction_id`, `id`) are standard UUID strings (e.g. `c666bc75-751c-4e4b-866b-af5b0393d131`).
-   * Financial amounts (`amount`, `sweep_amount`, `total_stash_balance`) are floating-point numbers in INR.
-   * `transaction_type` expects either `"debit"` or `"platform_payout"`.
+| Route | Does |
+|---|---|
+| `GET /health` | liveness, model mode, and which parsers are installed |
+| `POST /predict-credit-score` | score one fully specified applicant |
+| `POST /analyze-transactions` | score a ledger, explained metric by metric |
+| `POST /analyze-statement` | upload a bank/payout statement, derive and score |
+| `POST /recommend-insurance` | rank cover for a risk profile |
+| `POST /analyze-financials` | Revenue, PAT, EBITDA, net worth, debt, D/E, DSCR from accounts |
+| `POST /estimate-financials` | the same figures from GSTR-3B turnover + bank flows |
+
+### `POST /analyze-statement` (multipart)
+
+`file` plus optional `age`, `platform_customer_rating`,
+`active_platform_hours_per_week`, `primary_gig_platform` — the facts no
+statement contains. The response reports the **source of every feature**
+(statement, caller, or documented default) so a decision can be audited back to
+its evidence.
+
+Formats: PDF (bordered and borderless tables, with OCR fallback for scans), CSV,
+Excel, Word, plain text. Up to 25 MB. Parsers are optional dependencies; a
+core-only install answers `503` here with a clear message rather than failing to
+start, and `GET /health` reports what a deployment can actually read.
+
+### `POST /analyze-financials` (multipart)
+
+Same ingestion cascade, read as a set of accounts rather than a ledger. Every
+figure is labelled by how it was reached:
+
+| `source` | Means |
+|---|---|
+| `reported` | stated outright in the document |
+| `derived` | reconstructed from figures that were (EBITDA from PBT + interest + depreciation) |
+| `estimated` | inferred from GSTR-3B and bank flows |
+| `unavailable` | could not be established — `value` is `null`, **never `0`** |
+
+Indian reporting conventions are handled natively: `(Rs. in lakhs)` scale
+headers, `1,23,456.78` grouping, `(1,234.56)` accounting negatives, and `Cr`
+meaning *credit* rather than *crore*.
+
+### `POST /estimate-financials`
+
+`{ gst_taxable_turnover?, bank_rows[], period_months }` for a borrower with no
+audited accounts. Balance-sheet figures come back `unavailable` rather than
+approximated: there is no honest way to infer equity from a record of cash
+movements, and a D/E ratio built on a guess is worse than no ratio.
+
+---
+
+## 9. Error conventions
+
+Both services answer with FastAPI's `{"detail": …}`, either a string or a list
+of per-field validation errors. The dashboard unwraps both, so a user sees
+"amount must be greater than 0" rather than "HTTP 422".
+
+| Status | Means |
+|---|---|
+| `401` | no token, or it expired — the app signs out and returns to sign-in |
+| `403` | authenticated, but on the wrong side of the product |
+| `404` | no such row, **or** a row that is not yours (confirming an id exists is itself a leak) |
+| `409` | a conflict with existing state (duplicate email, second open application, deciding twice) |
+| `413` / `415` | upload too large / unsupported file type |
+| `422` | well-formed but unprocessable (validation, or terms not available) |
+| `503` | a dependency is down — the database, or the scoring service. Retryable. |

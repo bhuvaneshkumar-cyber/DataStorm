@@ -8,10 +8,18 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=${DATABASE_URL}
+      # Required: without it the backend mints a random signing key per process
+      # and every restart signs everyone out.
+      - JWT_SECRET=${JWT_SECRET}
+      # Resolved inside the Docker network, unlike the VITE_* vars below: this
+      # is a server-to-server call, so the service name is correct here.
+      - ML_SERVICE_URL=http://ml_service:8001
     env_file:
       - .env
     volumes:
       - ./backend:/app/backend
+    depends_on:
+      - ml_service
     restart: unless-stopped
 
   ml_service:
@@ -33,7 +41,7 @@ services:
     ports:
       - "5173:5173"
     environment:
-      # Resolved in the browser, not inside the container network — must be
+      # Resolved in the browser, not inside the Docker network — must be
       # host-reachable URLs, not Docker service names.
       - VITE_BACKEND_URL=http://localhost:8000
       - VITE_ML_URL=http://localhost:8001

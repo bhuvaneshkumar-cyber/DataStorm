@@ -112,6 +112,15 @@ def health() -> Dict[str, Any]:
     try:
         response = get_client().get("/health")
         response.raise_for_status()
-        return {"status": "reachable", **response.json()}
+        payload = response.json()
+        # The scorer's own body carries a `status` key too. Spreading it over
+        # ours would silently replace "reachable" with the scorer's "ok", so the
+        # two are kept under separate names: one says whether we got there, the
+        # other says what it told us when we did.
+        return {
+            "status": "reachable",
+            "scorer_status": payload.pop("status", None),
+            **payload,
+        }
     except (httpx.HTTPError, ValueError) as exc:
         return {"status": "unreachable", "url": ML_SERVICE_URL, "error": str(exc)}

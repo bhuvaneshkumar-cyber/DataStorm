@@ -1,6 +1,14 @@
-sqlalchemy>=2.0.0
-psycopg2-binary>=2.9.9
-python-dotenv>=1.0.0
-fastapi>=0.110.0
-uvicorn>=0.28.0
-pydantic>=2.0.0
+# Pinned for reproducible Docker builds (python:3.11-slim).
+fastapi==0.115.6
+uvicorn==0.34.0
+pydantic==2.10.4
+# EmailStr in schemas.py needs the validator; without it the app fails at import.
+email-validator==2.2.0
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+python-dotenv==1.0.1
+# JWT signing and verification (security.py).
+pyjwt==2.10.1
+# Server-side calls to the scoring service (scoring_client.py). Also what
+# fastapi.testclient imports, so it covers test_api.py too.
+httpx==0.28.1

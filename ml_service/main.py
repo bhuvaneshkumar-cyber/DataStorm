@@ -14,9 +14,9 @@ import logging
 import shutil
 import tempfile
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import pandas as pd
 import uvicorn
@@ -26,12 +26,18 @@ from fastapi.middleware.cors import CORSMiddleware
 import config
 import credit_metrics
 import document_ingestion
+import financial_statements
+import insurance_advisor
 import risk_policy
 import statement_features
 from model_pipeline import CreditModelPipeline
 from schemas import (
     CreditScoreRequest,
     CreditScoreResponse,
+    FinancialAnalysisResponse,
+    FinancialEstimateRequest,
+    InsuranceRecommendation,
+    InsuranceRequest,
     MetricAnalysis,
     StatementAnalysis,
     StatementScoreResponse,
@@ -228,6 +234,44 @@ def _save_upload(upload: UploadFile, directory: Path) -> Path:
     return destination
 
 
+@contextmanager
+def _parsed_upload(file: UploadFile) -> Iterator[dict]:
+    """Saves an upload, parses it, and always deletes it again.
+
+    Shared by both upload routes so the size cap, the extension allowlist, the
+    parser error mapping and -- most importantly -- the guaranteed cleanup exist
+    once. Uploaded documents are personal financial data and must not outlive
+    the request that read them.
+
+    The parse is wrapped separately from the `yield`: catching around the yield
+    too would swallow the caller's own exceptions and report an unrelated
+    scoring failure as an unreadable file.
+    """
+    workspace = Path(tempfile.mkdtemp(prefix="gigsave-upload-"))
+    try:
+        path = _save_upload(file, workspace)
+
+        try:
+            parsed = document_ingestion.ingest(str(path))
+        except document_ingestion.DependencyMissingError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            ) from exc
+        except document_ingestion.UnsupportedFormatError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
+            ) from exc
+        except document_ingestion.IngestionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+
+        yield parsed
+    finally:
+        file.file.close()
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
 def _tabulate(parsed: dict) -> pd.DataFrame:
     """Gets a transaction table out of whatever the ingestor returned.
 
@@ -312,27 +356,7 @@ def analyze_statement(
         "primary_gig_platform": primary_gig_platform,
     }
 
-    # Temp directory, always removed: statements are personal financial data and
-    # must not outlive the request that scored them.
-    workspace = Path(tempfile.mkdtemp(prefix="gigsave-stmt-"))
-    try:
-        path = _save_upload(file, workspace)
-
-        try:
-            parsed = document_ingestion.ingest(str(path))
-        except document_ingestion.DependencyMissingError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
-            ) from exc
-        except document_ingestion.UnsupportedFormatError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
-            ) from exc
-        except document_ingestion.IngestionError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-            ) from exc
-
+    with _parsed_upload(file) as parsed:
         table = _tabulate(parsed)
 
         try:
@@ -373,9 +397,78 @@ def analyze_statement(
             score=_score(applicant),
             metric_analysis=metric_analysis,
         )
-    finally:
-        file.file.close()
-        shutil.rmtree(workspace, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- #
+# Micro-insurance
+# --------------------------------------------------------------------------- #
+
+
+@app.post("/recommend-insurance", response_model=InsuranceRecommendation)
+def recommend_insurance(payload: InsuranceRequest) -> dict:
+    """Ranks micro-insurance cover for one worker's risk profile and job type.
+
+    Reads the same risk bands as the scoring and pricing paths, so the tier a
+    worker is quoted a loan at is the tier their insurance advice assumes.
+    """
+    return insurance_advisor.recommend(
+        credit_score=payload.credit_score,
+        employment_type=payload.employment_type,
+        average_weekly_payout=payload.average_weekly_payout,
+        resilience_stash_balance=payload.resilience_stash_balance,
+        active_platform_hours_per_week=payload.active_platform_hours_per_week,
+        payout_volatility_index=payload.payout_volatility_index,
+        age=payload.age,
+        risk_tier=payload.risk_tier,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Corporate financial statements
+# --------------------------------------------------------------------------- #
+
+
+@app.post("/analyze-financials", response_model=FinancialAnalysisResponse)
+def analyze_financials(
+    file: UploadFile = File(..., description="Annual report or financial statements."),
+) -> dict:
+    """Extracts Revenue, PAT, EBITDA, Net Worth, Debt, D/E and DSCR from accounts.
+
+    Shares the ingestion cascade with statement upload, so bordered and
+    borderless PDF tables, scanned pages needing OCR, Excel, CSV, Word and text
+    all arrive here already parsed. What differs is the reading: this looks for
+    a set of accounts rather than a transaction ledger.
+
+    Every figure comes back labelled `reported`, `derived` or `unavailable`, and
+    a figure that could not be established is null rather than zero.
+    """
+    with _parsed_upload(file) as parsed:
+        analysis = financial_statements.analyze_document(
+            text=parsed.get("text", ""),
+            tables=parsed.get("tables"),
+            dataframe=parsed.get("dataframe"),
+        )
+        return {
+            "source_format": parsed.get("source_format", "unknown"),
+            "extraction_method": parsed.get("extraction_method"),
+            **analysis.as_dict(),
+        }
+
+
+@app.post("/estimate-financials", response_model=FinancialAnalysisResponse)
+def estimate_financials(payload: FinancialEstimateRequest) -> dict:
+    """Estimates the same figures from GSTR-3B turnover and bank flows.
+
+    The path for a borrower with no audited accounts, which is most of them.
+    Balance-sheet figures come back unavailable rather than approximated: there
+    is no honest way to infer equity from a record of cash movements.
+    """
+    analysis = financial_statements.estimate_from_operations(
+        gst_taxable_turnover=payload.gst_taxable_turnover,
+        bank_rows=[row.model_dump() for row in payload.bank_rows],
+        period_months=payload.period_months,
+    )
+    return {"source_format": "estimated", "extraction_method": None, **analysis.as_dict()}
 
 
 if __name__ == "__main__":

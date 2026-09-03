@@ -47,6 +47,7 @@ def _ingest_and_evaluate(
     merchant: Optional[str],
     threshold: float,
     mandate_limit: float,
+    category: Optional[str] = None,
 ) -> Tuple[TransactionRecord, SweepDecision]:
     """Stages the transaction and scores it. Does NOT commit; callers decide.
 
@@ -58,6 +59,7 @@ def _ingest_and_evaluate(
         amount=amount,
         transaction_type=transaction_type,
         merchant=merchant,
+        category=category,
     )
     db.add(record)
     db.flush()
@@ -74,6 +76,7 @@ def add_transaction(
     amount: float,
     transaction_type: str,
     merchant: Optional[str] = None,
+    category: Optional[str] = None,
     threshold: float = DEFAULT_THRESHOLD,
     mandate_limit: float = DEFAULT_MANDATE_LIMIT,
 ) -> dict:
@@ -84,7 +87,7 @@ def add_transaction(
     """
     try:
         record, decision = _ingest_and_evaluate(
-            db, user_id, amount, transaction_type, merchant, threshold, mandate_limit
+            db, user_id, amount, transaction_type, merchant, threshold, mandate_limit, category
         )
         db.commit()
         db.refresh(record)
@@ -122,6 +125,7 @@ def process_transaction_event(
         tx, decision = _ingest_and_evaluate(
             db, user_id, amount, transaction_type, merchant, threshold, mandate_limit
         )
+
 
         sweep_record = None
         if decision.eligible:
@@ -209,6 +213,7 @@ def get_transactions(db: Session, user_id: Optional[UserId] = None, limit: int =
             "amount": float(r.amount),
             "transaction_type": r.transaction_type,
             "merchant": r.merchant,
+            "category": r.category,
             "status": r.status,
             "timestamp": r.timestamp.isoformat() if r.timestamp else None,
         }
@@ -216,7 +221,7 @@ def get_transactions(db: Session, user_id: Optional[UserId] = None, limit: int =
     ]
 
 
-def _sweep_to_dict(sweep: SavingsSweepRecord, include_user: bool = False) -> dict:
+def sweep_to_dict(sweep: SavingsSweepRecord, include_user: bool = False) -> dict:
     """Single serialization shape for a sweep row."""
     payload = {
         "id": str(sweep.id),
@@ -236,7 +241,7 @@ def get_sweeps(db: Session, user_id: Optional[UserId] = None, limit: int = 50) -
     if user_id:
         query = query.filter(SavingsSweepRecord.user_id == user_id)
     records = query.order_by(desc(SavingsSweepRecord.created_at)).limit(limit).all()
-    return [_sweep_to_dict(s, include_user=True) for s in records]
+    return [sweep_to_dict(s, include_user=True) for s in records]
 
 
 def get_user_dashboard_stats(db: Session, user_id: UserId) -> dict:
@@ -261,5 +266,5 @@ def get_user_dashboard_stats(db: Session, user_id: UserId) -> dict:
         "user_id": str(user_id),
         "total_stash_balance": round(float(total_saved or 0.0), 2),
         "income_30d_baseline": round(moving_average(history, INCOME_WINDOW), 2),
-        "recent_sweeps": [_sweep_to_dict(s) for s in sweeps],
+        "recent_sweeps": [sweep_to_dict(s) for s in sweeps],
     }

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -342,14 +342,3 @@ class BotAnswer(BaseModel):
     )
     sources: list[BotSource] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
-
-
-# --------------------------------------------------------------------------- #
-# Misc
-# --------------------------------------------------------------------------- #
-
-
-class HealthResponse(BaseModel):
-    service_status: str
-    database: dict[str, Any]
-    schema_sync: dict[str, Any]

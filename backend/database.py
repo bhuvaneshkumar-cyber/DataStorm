@@ -50,16 +50,30 @@ def _build_engine(url: Optional[str]) -> Optional[Engine]:
     if not url:
         logger.error("DATABASE_URL is not set. Database routes will return 503.")
         return None
-    try:
-        return create_engine(
-            _normalize_url(url),
-            pool_pre_ping=True,   # drop dead connections before handing them out
-            pool_recycle=300,     # Supabase's pooler closes idle connections
+
+    normalized = _normalize_url(url)
+
+    # Pool sizing and connect_timeout are psycopg2/queue-pool options. SQLite
+    # uses a SingletonThreadPool and its own DBAPI, and passing them there is a
+    # hard TypeError -- which is how a perfectly reasonable "point it at SQLite
+    # for local dev" ends up looking like a broken application instead.
+    options: dict = {"pool_pre_ping": True}
+    if not normalized.startswith("sqlite"):
+        options.update(
+            pool_recycle=300,  # Supabase's pooler closes idle connections
             pool_size=10,
             max_overflow=20,
             connect_args={"connect_timeout": 10},
         )
-    except (SQLAlchemyError, ValueError):
+
+    try:
+        return create_engine(normalized, **options)
+    except Exception:
+        # Broad on purpose. create_engine imports the DBAPI driver eagerly, so a
+        # missing psycopg2 raises ModuleNotFoundError -- not a SQLAlchemyError --
+        # and letting that escape would kill this module at import time, taking
+        # /health down with it. Degrading to "no engine" is the whole point of
+        # this function, and every caller already handles engine being None.
         logger.exception("Failed to create the SQLAlchemy engine")
         return None
 

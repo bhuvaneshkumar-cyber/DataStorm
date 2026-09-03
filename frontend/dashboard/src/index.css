@@ -103,6 +103,7 @@ body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--t
   font-size: 14px;
 }
 .nav-item:hover { background: rgba(255,255,255,0.1); }
+.nav-item.active { background: rgba(255,255,255,0.2); color: white; font-weight: 600; }
 .sidebar-footer { padding: 24px; border-top: 1px solid rgba(255,255,255,0.1); }
 .user-info { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .avatar {

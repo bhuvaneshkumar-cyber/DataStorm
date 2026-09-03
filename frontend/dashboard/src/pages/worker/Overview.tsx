@@ -1,21 +1,18 @@
 import { useEffect, useState } from 'react';
-import { fetchDashboard, fetchCreditScore } from '@/lib/api';
-import { Wallet, TrendingUp, ShieldCheck, ArrowUpRight } from 'lucide-react';
+import { fetchDashboard, fetchMyCreditProfile } from '@/lib/api';
+import { Wallet, TrendingUp, ShieldCheck } from 'lucide-react';
 
 export default function Overview() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([fetchDashboard(), fetchCreditScore({
-      age: 30, primary_gig_platform: 'Other', platform_customer_rating: 4,
-      completed_gigs_per_week: 10, average_weekly_payout: 5000,
-      payout_volatility_index: 0.2, active_platform_hours_per_week: 40,
-      resilience_stash_balance: 0
-    })]).then(([dash, score]) => {
-      setData({ dash, score });
-      setLoading(false);
-    }).catch(() => setLoading(false));
+    Promise.all([fetchDashboard(), fetchMyCreditProfile()])
+      .then(([dash, score]) => {
+        setData({ dash, score });
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
   }, []);
 
   if (loading) return <div className="loading">Loading Overview...</div>;

@@ -1,4 +1,4 @@
-import { Outlet, Link, useNavigate } from 'react-router-dom';
+import { Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Wallet,
@@ -7,10 +7,9 @@ import {
   ShieldCheck,
   FileText,
   HeartPulse,
-  MessageSquare,
-  LogOut,
-  User
+  MessageSquare
 } from 'lucide-react';
+import Sidebar from '@/components/Sidebar';
 
 export default function WorkerLayout({ user, setUser }: { user: any, setUser: (u: any) => void }) {
   const navigate = useNavigate();
@@ -22,47 +21,31 @@ export default function WorkerLayout({ user, setUser }: { user: any, setUser: (u
   };
 
   const navItems = [
-    { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={20} />, path: '/' },
-    { id: 'expenses', label: 'Expenses', icon: <ArrowLeftRight size={20} />, path: '/expenses' },
-    { id: 'platforms', label: 'Platforms', icon: <Wallet size={20} />, path: '/platforms' },
-    { id: 'credit', label: 'Credit', icon: <CreditCard size={20} />, path: '/credit' },
-    { id: 'loans', label: 'Loans', icon: <HeartPulse size={20} />, path: '/loans' },
-    { id: 'insurance', label: 'Insurance', icon: <ShieldCheck size={20} />, path: '/insurance' },
-    { id: 'tax', label: 'Tax', icon: <FileText size={20} />, path: '/tax' },
-    { id: 'bot', label: 'Policy Bot', icon: <MessageSquare size={20} />, path: '/bot' },
+    { label: 'Overview', icon: LayoutDashboard, path: '/' },
+    { label: 'Expenses', icon: ArrowLeftRight, path: '/expenses' },
+    { label: 'Platforms', icon: Wallet, path: '/platforms' },
+    { label: 'Credit', icon: CreditCard, path: '/credit' },
+    { label: 'Loans', icon: HeartPulse, path: '/loans' },
+    { label: 'Insurance', icon: ShieldCheck, path: '/insurance' },
+    { label: 'Tax', icon: FileText, path: '/tax' },
+    { label: 'Policy Bot', icon: MessageSquare, path: '/bot' },
   ];
 
   return (
     <div className="worker-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="logo">DS</div>
-          <h2>DataStorm</h2>
-        </div>
-        <nav className="nav-list">
-          {navItems.map(item => (
-            <Link key={item.id} to={item.path} className="nav-item">
-              {item.icon}
-              <span>{item.label}</span>
-            </Link>
-          ))}
-        </nav>
-        <div className="sidebar-footer">
-          <div className="user-info">
-            <div className="avatar">{user.name?.[0] || 'U'}</div>
-            <span>{user.name || 'User'}</span>
-          </div>
-          <button onClick={handleLogout} className="logout-btn">
-            <LogOut size={18} />
-            <span>Logout</span>
-          </button>
-        </div>
-      </aside>
+      <Sidebar
+        brandName="DataStorm"
+        brandLogo="DS"
+        brandColor="var(--primary)"
+        navItems={navItems}
+        user={user}
+        onLogout={handleLogout}
+      />
       <main className="main-content">
         <header className="top-bar">
-          <h1>Financial Resilience Center</h1>
+          <h1 className="page-title">Financial Resilience Center</h1>
           <div className="top-actions">
-             <span>Welcome, {user.name}</span>
+             <span className="user-greeting">Welcome, {user.name}</span>
           </div>
         </header>
         <div className="page-body">

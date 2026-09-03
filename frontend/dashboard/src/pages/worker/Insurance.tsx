@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
-import { fetchInsuranceRecommendations } from '@/lib/api';
-import { ShieldCheck, Info, AlertCircle } from 'lucide-react';
+import { fetchInsuranceRecs } from '@/lib/api';
+import { ShieldCheck, Info } from 'lucide-react';
 
 export default function Insurance() {
   const [recs, setRecs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchInsuranceRecommendations().then(setRecs).finally(() => setLoading(false));
+    fetchInsuranceRecs().then(setRecs).finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div className="loading">Loading Insurance Recommendations...</div>;

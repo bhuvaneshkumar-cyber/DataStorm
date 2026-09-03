@@ -1,5 +1,6 @@
-import { Outlet, Link, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Wallet, ArrowLeftRight, CreditCard, ShieldCheck, FileText, HeartPulse, MessageSquare, LogOut, User } from 'lucide-react';
+import { Outlet, useNavigate } from 'react-router-dom';
+import { LayoutDashboard } from 'lucide-react';
+import Sidebar from '@/components/Sidebar';
 
 export default function LenderLayout({ user, setUser }: { user: any, setUser: (u: any) => void }) {
   const navigate = useNavigate();
@@ -10,35 +11,25 @@ export default function LenderLayout({ user, setUser }: { user: any, setUser: (u
     navigate('/login');
   };
 
+  const navItems = [
+    { label: 'Dashboard', icon: LayoutDashboard, path: '/lender' },
+  ];
+
   return (
     <div className="worker-shell">
-      <aside className="sidebar lender-sidebar">
-        <div className="brand">
-          <div className="logo lender-logo">L</div>
-          <h2>Lender Portal</h2>
-        </div>
-        <nav className="nav-list">
-          <Link to="/lender" className="nav-item">
-            <LayoutDashboard size={20} />
-            <span>Dashboard</span>
-          </Link>
-        </nav>
-        <div className="sidebar-footer">
-          <div className="user-info">
-            <div className="avatar">{user.name?.[0] || 'L'}</div>
-            <span>{user.name || 'Lender'}</span>
-          </div>
-          <button onClick={handleLogout} className="logout-btn">
-            <LogOut size={18} />
-            <span>Logout</span>
-          </button>
-        </div>
-      </aside>
+      <Sidebar
+        brandName="Lender Portal"
+        brandLogo="L"
+        brandColor="#f59e0b"
+        navItems={navItems}
+        user={user}
+        onLogout={handleLogout}
+      />
       <main className="main-content">
         <header className="top-bar">
-          <h1>Lender Management Console</h1>
+          <h1 className="page-title">Lender Management Console</h1>
           <div className="top-actions">
-             <span>Welcome, {user.name}</span>
+             <span className="user-greeting">Welcome, {user.name}</span>
           </div>
         </header>
         <div className="page-body">

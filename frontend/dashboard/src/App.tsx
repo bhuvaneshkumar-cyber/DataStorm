@@ -11,6 +11,7 @@ import Credit from './pages/worker/Credit';
 import Loans from './pages/worker/Loans';
 import Insurance from './pages/worker/Insurance';
 import Tax from './pages/worker/Tax';
+import Bot from './pages/worker/Bot';
 import LenderDashboard from './pages/lender/LenderDashboard';
 
 function App() {
@@ -47,7 +48,8 @@ function App() {
           <Route path="loans" element={<Loans />} />
           <Route path="insurance" element={<Insurance />} />
           <Route path="tax" element={<Tax />} />
-        </Route>
+          <Route path="bot" element={<Bot />} />
+        </Route>>
 
         <Route path="/lender" element={user?.role === 'lender' ? <LenderLayout user={user} setUser={setUser} /> : <Navigate to="/login" />}>
           <Route index element={<LenderDashboard />} />

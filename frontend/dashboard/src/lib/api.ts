@@ -87,6 +87,10 @@ export async function fetchPlatforms() {
   return request(`${BACKEND_URL}/api/platforms`);
 }
 
+export async function fetchDashboard() {
+  return request(`${BACKEND_URL}/api/dashboard`);
+}
+
 export async function connectPlatform(data: any) {
   return request(`${BACKEND_URL}/api/platforms`, {
     method: 'POST',

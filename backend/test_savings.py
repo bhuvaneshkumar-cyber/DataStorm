@@ -1,5 +1,5 @@
 import unittest
-from savings import income_surplus, moving_average, round_up, sweep_decision
+from savings import SavingsEngine, Transaction, income_surplus, moving_average, round_up, sweep_decision
 
 
 class SavingsTests(unittest.TestCase):
@@ -18,6 +18,17 @@ class SavingsTests(unittest.TestCase):
         self.assertTrue(sweep_decision(82, 18).eligible)
         self.assertFalse(sweep_decision(40, 20).eligible)
         self.assertFalse(sweep_decision(900, 200).eligible)
+
+    def test_engine_accumulates_events_until_authorized(self):
+        engine = SavingsEngine([1000] * 30)
+        self.assertFalse(engine.process(Transaction(132, "debit")).eligible)
+        self.assertTrue(engine.process(Transaction(2000, "platform_payout")).eligible)
+        self.assertEqual(engine.authorize_sweep().amount, 118.0)
+        self.assertFalse(engine.authorize_sweep().eligible)
+
+    def test_engine_rejects_unknown_event_kind(self):
+        with self.assertRaises(ValueError):
+            SavingsEngine([]).process(Transaction(10, "transfer"))
 
 
 if __name__ == "__main__":

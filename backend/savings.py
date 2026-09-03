@@ -10,6 +10,40 @@ class SweepDecision:
     reason: str
 
 
+@dataclass(frozen=True)
+class Transaction:
+    amount: float
+    kind: str
+
+
+class SavingsEngine:
+    """Small orchestration boundary for bank events and savings sweeps."""
+
+    def __init__(self, income_history: Iterable[float], threshold: float = 100, mandate_limit: float = 1000):
+        self.income_history = list(income_history)
+        self.pending_roundups = 0.0
+        self.pending_surplus = 0.0
+        self.threshold = threshold
+        self.mandate_limit = mandate_limit
+
+    def process(self, transaction: Transaction, surplus_percentage: float = 0.10) -> SweepDecision:
+        if transaction.kind == "debit":
+            self.pending_roundups += round_up(transaction.amount)
+        elif transaction.kind == "platform_payout":
+            self.pending_surplus += income_surplus(transaction.amount, self.income_history, surplus_percentage)
+            self.income_history.append(transaction.amount)
+        else:
+            raise ValueError("kind must be debit or platform_payout")
+        return sweep_decision(self.pending_roundups, self.pending_surplus, self.threshold, self.mandate_limit)
+
+    def authorize_sweep(self) -> SweepDecision:
+        decision = sweep_decision(self.pending_roundups, self.pending_surplus, self.threshold, self.mandate_limit)
+        if decision.eligible:
+            self.pending_roundups = 0.0
+            self.pending_surplus = 0.0
+        return decision
+
+
 def round_up(amount: float, multiple: int = 50) -> float:
     if amount < 0 or multiple <= 0:
         raise ValueError("amount must be non-negative and multiple must be positive")

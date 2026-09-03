@@ -1,1 +1,6 @@
-# Calculation service uses Python standard library only.
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+python-dotenv>=1.0.0
+fastapi>=0.110.0
+uvicorn>=0.28.0
+pydantic>=2.0.0

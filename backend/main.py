@@ -1,5 +1,5 @@
 import uuid
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -7,7 +7,8 @@ from typing import Optional
 
 from database import get_db, check_db_connection
 import db_service
-import models
+import models  # noqa: F401  -- imported so SQLAlchemy registers the mapped tables
+import webhooks
 
 app = FastAPI(
     title="DataStrom Financial Engine API",
@@ -40,6 +41,14 @@ class SweepCreate(BaseModel):
     sweep_amount: float = Field(..., gt=0)
     transaction_id: Optional[uuid.UUID] = None
     reason: Optional[str] = "UPI AutoPay sweep authorized"
+
+
+class SweepAuthorizeRequest(BaseModel):
+    """Body of POST /webhooks/sweep - sweep whatever has accumulated so far."""
+
+    user_id: uuid.UUID
+    threshold: float = Field(100.0, gt=0)
+    mandate_limit: float = Field(1000.0, gt=0)
 
 
 @app.get("/")
@@ -116,6 +125,55 @@ def authorize_sweep(payload: SweepCreate, db: Session = Depends(get_db)):
 def get_dashboard(user_id: uuid.UUID, db: Session = Depends(get_db)):
     """Returns total savings stash, 30-day baseline income, and recent sweep records."""
     return db_service.get_user_dashboard_stats(db, user_id=user_id)
+
+
+# ---------------------------------------------------------------------------
+# Webhook ingestion (ported from the retired Node/Express service)
+# ---------------------------------------------------------------------------
+
+
+async def authenticated_body(
+    request: Request,
+    x_webhook_signature: Optional[str] = Header(default=None),
+    x_webhook_secret: Optional[str] = Header(default=None),
+):
+    """Authenticates the caller against the *raw* body, then parses it.
+
+    The HMAC must be computed over the exact bytes on the wire, so the body is
+    read here rather than through a Pydantic model - re-serialising it first
+    would change the bytes and break every signature.
+    """
+    raw_body = await request.body()
+    try:
+        webhooks.authenticate(raw_body, x_webhook_signature, x_webhook_secret)
+    except webhooks.WebhookAuthError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    try:
+        return await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Request body must be valid JSON.") from exc
+
+
+@app.post("/webhooks/transaction")
+def ingest_transaction_webhook(payload: dict = Depends(authenticated_body), db: Session = Depends(get_db)):
+    """Bank debit / platform payout events: round up, smooth income, sweep."""
+    try:
+        event = webhooks.parse_event(payload)
+    except webhooks.WebhookValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return db_service.process_webhook_event(db, event)
+
+
+@app.post("/webhooks/sweep")
+def authorize_pending_sweep(payload: dict = Depends(authenticated_body), db: Session = Depends(get_db)):
+    """Manually authorises a sweep of the caller's accumulated contributions."""
+    try:
+        body = SweepAuthorizeRequest(**payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid sweep request: {exc}") from exc
+    return db_service.authorize_manual_sweep(
+        db, body.user_id, threshold=body.threshold, mandate_limit=body.mandate_limit
+    )
 
 
 if __name__ == "__main__":

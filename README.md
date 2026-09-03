@@ -1,58 +1,98 @@
 # GigSave
 
-Prototype implementation for the gig-worker resilience savings workflow. AltCred is used as a structural baseline for modular auth, API boundaries, validation, health checks, and deployment practices, while this MVP keeps the financial rules dependency-light.
+Prototype implementation for the gig-worker resilience savings workflow: automatic
+micro-savings for gig workers, plus an alternative credit score built from
+gig-work signals rather than a salary history.
 
-## Current vertical slice
+## Architecture
 
-- `frontend/`: editable architecture/workflow prototype
-- `backend/savings.py`: deterministic financial functions plus `SavingsEngine` event orchestration
-- `backend/test_savings.py`: unit tests for calculations, event processing, thresholds, and authorization
-- `backend/requirements.txt`: explicit no-dependency Python service baseline
-- `ml_service/`: FastAPI hybrid credit-scoring service (rules 40% + RandomForest 60%, SHAP explanations)
-- `backend/node/`: Express + MongoDB port of the savings engine, with HMAC-verified webhook ingestion
+Three services, one database. Everything server-side is Python/FastAPI, and all
+persistence is Supabase PostgreSQL.
 
-## Current Workflow
-
-1. **Secure onboarding:** register in the React Native client, obtain time-bound AA consent, and authorize a capped UPI AutoPay mandate.
-2. **Read-only ingestion:** receive bank debit and platform-payout webhooks through an OAuth 2.0, mTLS, TLS 1.3 gateway.
-3. **Dual engine:** round a debit such as ₹132 up to the nearest ₹50 contribution of ₹18; calculate payout surplus against a rolling 30-day average.
-4. **Authorize and execute:** aggregate pending contributions, require the ₹100 minimum, enforce the mandate cap, and execute the exact approved AutoPay amount.
-5. **Resilience and relief:** hold funds in the Resilience Stash, show balance and sweep history, and return an immediate withdrawal to the primary bank account during a lean week.
-
-## Prototype Structure
+| Service | Path | Port | Responsibility |
+|---|---|---|---|
+| Financial API | `backend/` | 8000 | Webhook ingestion, round-ups, income smoothing, sweeps, dashboard |
+| ML scoring | `ml_service/` | 8001 | Hybrid rule + RandomForest credit score with SHAP explanations |
+| Dashboard | `frontend/dashboard/` | 5173 | React/Vite UI, reads both services over HTTP |
 
 ```text
-frontend/                 Editable architecture and workflow board
-backend/savings.py        Domain calculations and SavingsEngine orchestration
-backend/test_savings.py   Unit tests for the financial workflow
-backend/requirements.txt  Dependency declaration (standard library only)
-ml_service/schemas.py     Pydantic request/response contracts (8 gig features)
-ml_service/scoring_rules.py  Deterministic 0-800 rule engine and score bands
-ml_service/model_pipeline.py RandomForest training, inference, top-3 SHAP factors
-ml_service/main.py        FastAPI app: GET /health, POST /predict-credit-score
-ml_service/test_scoring.py Rule ordering, hybrid math, and ML-failure fallback
+backend/savings.py        Pure financial calculations (round-up, moving average, sweep rules)
+backend/webhooks.py       Webhook auth (HMAC-SHA256), validation, deterministic event ids
+backend/db_service.py     Ledger persistence, pending-contribution replay, sweep execution
+backend/models.py         SQLAlchemy models: users, transactions, savings_sweeps
+backend/database.py       Supabase engine + session factory (DATABASE_URL only)
+backend/main.py           FastAPI app: /health, /api/*, /webhooks/*
+ml_service/schemas.py         Pydantic contracts (8 gig features)
+ml_service/scoring_rules.py   Deterministic 0-800 rule engine and score bands
+ml_service/model_pipeline.py  Synthetic training set, RandomForest, top-3 SHAP factors
+ml_service/main.py            FastAPI app: /health, /predict-credit-score
+frontend/dashboard/src/       Dashboard UI; every figure comes from a live service
 ```
 
-## Scoring Service
+## Workflow
 
-Hybrid score = `rule_score * 0.4 + ml_score * 0.6`, both on a 0-800 scale. If the
-model is unavailable or prediction raises, the response degrades to 100% rule-based
-(`ml_available: false`) rather than failing the request.
+1. **Secure onboarding:** obtain time-bound AA consent and authorize a capped UPI
+   AutoPay mandate.
+2. **Read-only ingestion:** bank debits and platform payouts arrive at
+   `POST /webhooks/transaction`, authenticated with an HMAC-SHA256 signature over
+   the raw body (or a shared secret header).
+3. **Dual engine:** a ₹132 debit rounds up to the next ₹50 for an ₹18
+   contribution; a payout contributes 10% of however much it exceeds the rolling
+   30-payout average.
+4. **Authorize and execute:** contributions accumulate in the ledger until they
+   clear the ₹100 minimum and sit under the mandate cap, then a sweep is written
+   and the transactions it consumed are marked swept.
+5. **Resilience and relief:** the stash balance, pending total, and sweep history
+   drive the dashboard.
+
+Contributions accumulate in `transactions.status` rather than in a separate
+counter, so the pending balance is always re-derivable from the ledger rows and
+can never drift away from them.
+
+## Running it
+
+Copy `.env.example` to `.env` and set `DATABASE_URL` (and `WEBHOOK_SECRET` if you
+want the webhook endpoints open). Then:
+
+```bash
+docker compose up --build
+```
+
+Or run the services directly:
 
 ```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\pip install -r backend\requirements.txt
+.venv\Scripts\python backend\main.py          # http://127.0.0.1:8000/docs
+
+py -3.11 -m venv .venv_ml
 .venv_ml\Scripts\pip install -r ml_service\requirements.txt
-py -3.12 -m venv .venv_ml
-.venv_ml\Scripts\python ml_service\main.py   # http://127.0.0.1:8000/docs
+.venv_ml\Scripts\python ml_service\main.py    # http://127.0.0.1:8001/docs
+
+cd frontend\dashboard
+npm install
+npm run dev                                    # http://127.0.0.1:5173
 ```
 
-Pinned for Python 3.11/3.12 - `scikit-learn` and `numpy` 1.26 have no 3.14 wheels.
+Both requirements files are pinned for **Python 3.11** (what the Dockerfiles use).
+`numpy` 1.26 and `shap` 0.46 publish no wheels for 3.13+, so a newer interpreter
+will try to build them from source.
+
+The dashboard needs all three vars in `frontend/dashboard/.env.example`. It has no
+local fallback data: a missing var or an unreachable service renders an error,
+never a placeholder number.
 
 ## Test
 
 ```powershell
 python -m unittest discover -s backend -p "test_*.py"
 .venv_ml\Scripts\python -m pytest ml_service -q
-cd backend/node && npm install && npm test
+cd frontend\dashboard; npx tsc --noEmit; npm run build
 ```
 
-The prototype deliberately leaves real bank/platform provider adapters, mTLS termination, an OAuth 2.0 gateway, encrypted secrets storage, and native mobile screens as the next integration layer — see `checkpoint.md` for the current status and what's left. The calculation and event-orchestration boundary (`backend/savings.py` and its Node port `backend/node/src/services/savingsEngine.js`) is tested and wired up end-to-end: `backend/node` now has a real Express server with an HMAC-verified `/webhooks/transaction` and `/webhooks/sweep`, backed by MongoDB via Mongoose.
+## Not yet built
+
+Real bank/platform provider adapters, mTLS termination, an OAuth 2.0 gateway,
+encrypted secrets storage, authentication (the dashboard reads one fixed
+`VITE_DASHBOARD_USER_ID`), and a gig-platform connector for the six worker
+attributes in `frontend/dashboard/src/config.ts`.

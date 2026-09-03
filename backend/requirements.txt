@@ -1,6 +1,18 @@
-sqlalchemy>=2.0.0
-psycopg2-binary>=2.9.9
-python-dotenv>=1.0.0
-fastapi>=0.110.0
-uvicorn>=0.28.0
-pydantic>=2.0.0
+# Pinned for Python 3.11 (see the root Dockerfile) so the image is reproducible.
+# fastapi / uvicorn / pydantic are held at the same versions as
+# ml_service/requirements.txt: the two services are separate images, but keeping
+# the shared stack identical means one venv can run both suites without a
+# resolver conflict.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+
+# Supabase PostgreSQL access. SQLAlchemy 2.0.x is what database.py's
+# declarative_base / sessionmaker usage targets; psycopg2-binary ships a wheel so
+# the image needs no local libpq build.
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+python-dotenv==1.0.1
+
+# Test-only, pinned so one `pip install -r` gives a runnable suite.
+pytest==8.3.4

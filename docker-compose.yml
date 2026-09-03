@@ -1,13 +1,18 @@
+# Three services, all that the consolidated architecture needs:
+#   frontend          - React/Vite dashboard
+#   financial_backend - Python/FastAPI savings engine on Supabase PostgreSQL
+#   ml_service        - Python/FastAPI credit scoring
 services:
-  backend:
+  financial_backend:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: datastrom_backend
+    container_name: gigsave_financial_backend
     ports:
       - "8000:8000"
     environment:
       - DATABASE_URL=${DATABASE_URL}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
     env_file:
       - .env
     volumes:
@@ -18,7 +23,7 @@ services:
     build:
       context: .
       dockerfile: ml_service/Dockerfile
-    container_name: datastrom_ml_service
+    container_name: gigsave_ml_service
     ports:
       - "8001:8001"
     volumes:
@@ -29,18 +34,21 @@ services:
     build:
       context: ./frontend/dashboard
       dockerfile: Dockerfile
-    container_name: datastrom_frontend
+    container_name: gigsave_frontend
     ports:
       - "5173:5173"
     environment:
-      # Resolved in the browser, not inside the container network — must be
+      # Resolved in the browser, not inside the container network - must be
       # host-reachable URLs, not Docker service names.
-      - VITE_BACKEND_URL=http://localhost:8000
-      - VITE_ML_URL=http://localhost:8001
+      - VITE_FINANCIAL_API_URL=http://localhost:8000
+      - VITE_ML_API_URL=http://localhost:8001
+      - VITE_DASHBOARD_USER_ID=${VITE_DASHBOARD_USER_ID}
+    env_file:
+      - .env
     volumes:
       - ./frontend/dashboard:/app
       - /app/node_modules
     depends_on:
-      - backend
+      - financial_backend
       - ml_service
     restart: unless-stopped

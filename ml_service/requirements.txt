@@ -1,13 +1,17 @@
-# Pinned for Python 3.11+ / Docker reproducibility.
-# numpy is held at 1.26.x: shap 0.46 ships wheels built against the 1.x ABI,
-# and mixing it with numpy 2.x is the usual source of "resolution" pain.
+# Pinned for Python 3.11 (see ml_service/Dockerfile) and reproducibility.
+#
+# These are the exact versions the test suite runs against. numpy is on 2.x with
+# shap 0.48: the older shap 0.46 / numpy 1.26 pairing was locked to the numpy 1.x
+# ABI and publishes no wheels beyond Python 3.12, so anyone on a newer
+# interpreter had to build numpy from source. This set installs from wheels on
+# 3.11 through 3.13.
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic==2.10.4
-numpy==1.26.4
+numpy==2.2.6
 pandas==2.2.3
-scikit-learn==1.5.2
-shap==0.46.0
+scikit-learn==1.6.1
+shap==0.48.0
 # Test-only, but pinned here so one `pip install -r` gives a runnable suite:
 # fastapi.testclient needs httpx at import time.
 httpx==0.28.1

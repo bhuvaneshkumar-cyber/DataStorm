@@ -1,21 +1,24 @@
-﻿'use strict';
+'use strict';
 /**
- * webhookRoutes.js – Express router for bank/platform webhook endpoints (stub)
+ * webhookRoutes.js – Express router for bank/platform webhook endpoints.
  *
- * Planned routes:
- *   POST /webhooks/transaction  – bank debit / platform_payout events
- *   POST /webhooks/sweep        – trigger authorizeAndReset() manually (admin/test)
+ *   POST /webhooks/transaction  – bank debit / platform payout events
+ *   POST /webhooks/sweep        – trigger a manual sweep check (admin/test)
  *
- * TODO (Phase 3):
- *   - Mount webhookListener as middleware.
- *   - Add request validation middleware.
- *   - Wire into app.js.
+ * Both routes require a valid X-Webhook-Signature header (see webhookListener).
  */
 
 const express = require('express');
 
+const {
+  verifySignatureMiddleware,
+  handleTransactionWebhook,
+  handleSweepWebhook,
+} = require('../listeners/webhookListener');
+
 const router = express.Router();
 
-// Stub – routes will be added in Phase 3.
+router.post('/transaction', verifySignatureMiddleware, handleTransactionWebhook);
+router.post('/sweep', verifySignatureMiddleware, handleSweepWebhook);
 
 module.exports = router;

@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import shap
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 
 from schemas import CreditScoreRequest
 
@@ -80,18 +81,24 @@ class CreditModelPipeline:
     def _train(self, n_samples: int) -> None:
         try:
             X, y = self._synthetic_training_set(n_samples)
+            # Held-out split so the logged accuracy reflects generalization,
+            # not memorization of the training rows.
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=self.random_state, stratify=y
+            )
             self.model = RandomForestClassifier(
                 n_estimators=120,
                 max_depth=8,
                 min_samples_leaf=5,
                 random_state=self.random_state,
                 n_jobs=-1,
-            ).fit(X, y)
+            ).fit(X_train, y_train)
             self.explainer = shap.TreeExplainer(self.model)
             logger.info(
-                "Model trained on %d synthetic rows (train accuracy %.3f)",
-                n_samples,
-                self.model.score(X, y),
+                "Model trained on %d synthetic rows (train accuracy %.3f, held-out accuracy %.3f)",
+                len(X_train),
+                self.model.score(X_train, y_train),
+                self.model.score(X_test, y_test),
             )
         except Exception:
             logger.exception("Model training failed; service will run rules-only")

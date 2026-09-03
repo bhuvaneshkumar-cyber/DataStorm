@@ -1,5 +1,15 @@
-﻿'use strict';
-// TODO (Phase 3): Define Mongoose connection helper.
-// Stub – no logic yet.
+'use strict';
+/**
+ * config/db.js – Mongoose connection helper.
+ */
 
-module.exports = {};
+const mongoose = require('mongoose');
+
+const config = require('./index');
+
+async function connectDB() {
+  mongoose.set('strictQuery', true);
+  return mongoose.connect(config.mongoUri);
+}
+
+module.exports = { connectDB };

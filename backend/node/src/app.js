@@ -52,23 +52,24 @@ app.get('/health', (_req, res) => {
 app.use('/webhooks', webhookRoutes);
 
 // ---------------------------------------------------------------------------
-// Global error handler
-// Must have exactly four arguments so Express recognises it as an error handler.
+// Fallbacks
 // ---------------------------------------------------------------------------
+
+// Unknown route: answer in JSON so clients never have to parse Express's HTML.
+app.use((req, res) => {
+  res.status(404).json({ error: `Not found: ${req.method} ${req.originalUrl}` });
+});
+
+// Error handler. Must be last, and must take exactly four arguments for Express
+// to recognise it as one.
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
   console.error('[app] Unhandled error:', err);
   if (err instanceof SyntaxError && err.status === 400 && err.type === 'entity.parse.failed') {
     return res.status(400).json({ error: 'Malformed JSON request body.' });
   }
-  res.status(500).json({ error: 'Internal server error.' });
-});
-app.use('/webhooks', webhookRoutes);
-
-app.use((err, _req, res, _next) => {
-  console.error('[app] Unhandled error:', err);
-  if (err instanceof SyntaxError && err.status === 400 && err.type === 'entity.parse.failed') {
-    return res.status(400).json({ error: 'Malformed JSON request body.' });
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request body too large.' });
   }
   return res.status(500).json({ error: 'Internal server error.' });
 });

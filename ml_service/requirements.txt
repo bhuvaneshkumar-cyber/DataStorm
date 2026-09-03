@@ -4,6 +4,9 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic==2.10.4
+# Required by FastAPI to declare the multipart upload route in main.py.
+# Core, not optional: without it the app fails at import, not at request time.
+python-multipart==0.0.20
 numpy==1.26.4
 pandas==2.2.3
 scikit-learn==1.5.2

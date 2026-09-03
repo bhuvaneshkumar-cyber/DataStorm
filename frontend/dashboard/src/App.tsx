@@ -24,7 +24,8 @@ import {
 } from 'lucide-react';
 import { financialDataAdapter, type RecentSweep } from '@/data/financial-data';
 import { fetchCreditScore, fetchDashboard } from '@/lib/api';
-import Sidebar from '@/components/Sidebar';
+import Sidebar, { IMPLEMENTED_VIEWS, VIEW_LABELS, type ViewId } from '@/components/Sidebar';
+import CreditAnalysis from '@/pages/CreditAnalysis';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -204,8 +205,10 @@ function Home() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [demoOpen, setDemoOpen] = useState(false);
+  const [liveNotice, setLiveNotice] = useState<string | null>(null);
 
   // Sidebar state
+  const [view, setView] = useState<ViewId>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const brandRef = useRef<HTMLDivElement>(null);
 
@@ -222,9 +225,12 @@ function Home() {
   // (service down, no demo user seeded) keep the local demo snapshot as-is —
   // this UI is designed to look complete either way.
   useEffect(() => {
-    fetchDashboard()
+    let cancelled = false;
+    const offline: string[] = [];
+
+    const dashboard = fetchDashboard()
       .then((data) => {
-        if (!data) return;
+        if (cancelled || !data) return;
         setStash(data.total_stash_balance);
         setSweeps(
           data.recent_sweeps.map((s) => ({
@@ -237,9 +243,9 @@ function Home() {
           })),
         );
       })
-      .catch(() => {});
+      .catch(() => offline.push('savings'));
 
-    fetchCreditScore({
+    const score = fetchCreditScore({
       age: 29,
       primary_gig_platform: 'Ride-Hailing',
       platform_customer_rating: 4.7,
@@ -249,15 +255,34 @@ function Home() {
       active_platform_hours_per_week: 44,
       resilience_stash_balance: snapshot.stash.amount,
     })
-      .then((score) =>
+      .then((result) => {
+        if (cancelled) return;
         setCredit((current) => ({
           ...current,
-          score: Math.round(score.final_score),
-          label: score.category,
-        })),
-      )
-      .catch(() => {});
-  }, []);
+          score: Math.round(result.final_score),
+          label: result.category,
+          factors: result.risk_assessment?.early_warning_signals.length
+            ? result.risk_assessment.early_warning_signals.map((s) => s.title)
+            : current.factors,
+        }));
+      })
+      .catch(() => offline.push('credit scoring'));
+
+    // The demo snapshot keeps the page complete when a service is down, but the
+    // user is told the numbers are not live rather than being shown stale data
+    // as though it were fresh.
+    Promise.allSettled([dashboard, score]).then(() => {
+      if (!cancelled && offline.length) {
+        setLiveNotice(
+          `Showing sample data — ${offline.join(' and ')} ${offline.length > 1 ? 'services are' : 'service is'} unreachable.`,
+        );
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [snapshot.stash.amount]);
 
   const announce = (message: string) => setToast(message);
 
@@ -302,6 +327,8 @@ function Home() {
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         triggerRef={brandRef}
+        active={view}
+        onNavigate={setView}
       />
 
       {/* ---- Header ---- */}
@@ -409,6 +436,35 @@ function Home() {
 
       {/* ---- Main content ---- */}
       <main className="dashboard-main">
+        {view === 'credit' ? (
+          <CreditAnalysis announce={announce} />
+        ) : !IMPLEMENTED_VIEWS.has(view) ? (
+          <div className="page-title placeholder-view" data-testid={`view-placeholder-${view}`}>
+            <div className="eyebrow">
+              <span className="eyebrow-dot" /> {VIEW_LABELS[view]}
+            </div>
+            <h1>{VIEW_LABELS[view]} is on the way.</h1>
+            <p>
+              This space isn't built yet. Dashboard and Credit are live — everything
+              else is a placeholder rather than a screen pretending to work.
+            </p>
+            <button
+              className="primary-button"
+              type="button"
+              style={{ marginTop: 18 }}
+              onClick={() => setView('dashboard')}
+            >
+              Back to dashboard
+            </button>
+          </div>
+        ) : (
+        <>
+        {liveNotice && (
+          <div className="notice notice-warn" role="status" data-testid="notice-live-data">
+            <Info size={15} />
+            <span>{liveNotice}</span>
+          </div>
+        )}
         <div className="page-title">
           <div className="eyebrow">
             <span className="eyebrow-dot" /> Personal financial space
@@ -760,6 +816,8 @@ function Home() {
             </div>
           )}
         </div>
+        </>
+        )}
       </main>
 
       {/* ---- Modal ---- */}

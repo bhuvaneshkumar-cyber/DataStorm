@@ -1,35 +1,57 @@
+"""Persistence layer: transaction ingestion, sweep ledger, and dashboard reads.
+
+Every write goes through `_ingest_and_evaluate`, so the insert-then-score
+sequence exists once and both public entry points stay consistent with it.
+"""
+
+import logging
 import uuid
-from typing import List, Optional, Union
-from sqlalchemy.orm import Session
+from typing import List, Optional, Tuple, Union
+
 from sqlalchemy import desc, func
-from models import User, TransactionRecord, SavingsSweepRecord
-from savings import SavingsEngine, Transaction, moving_average
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from models import SavingsSweepRecord, TransactionRecord
+from savings import SavingsEngine, SweepDecision, Transaction, moving_average
+
+logger = logging.getLogger(__name__)
+
+UserId = Union[str, uuid.UUID]
+
+DEFAULT_THRESHOLD = 100.0
+DEFAULT_MANDATE_LIMIT = 1000.0
+INCOME_WINDOW = 30
 
 
-def get_user_income_history(db: Session, user_id: Union[str, uuid.UUID], limit: int = 30) -> List[float]:
-    """Retrieves recent platform payout amounts for a user to calculate baseline income."""
+def get_user_income_history(db: Session, user_id: UserId, limit: int = INCOME_WINDOW) -> List[float]:
+    """Recent platform payouts, oldest first, for the rolling income baseline."""
     records = (
         db.query(TransactionRecord.amount)
-        .filter(TransactionRecord.user_id == user_id, TransactionRecord.transaction_type == "platform_payout")
+        .filter(
+            TransactionRecord.user_id == user_id,
+            TransactionRecord.transaction_type == "platform_payout",
+        )
         .order_by(desc(TransactionRecord.timestamp))
         .limit(limit)
         .all()
     )
-    return [float(r[0]) for r in reversed(records)]
+    return [float(row[0]) for row in reversed(records)]
 
 
-def add_transaction(
+def _ingest_and_evaluate(
     db: Session,
-    user_id: Union[str, uuid.UUID],
+    user_id: UserId,
     amount: float,
     transaction_type: str,
-    merchant: Optional[str] = None,
-    threshold: float = 100.0,
-    mandate_limit: float = 1000.0,
-) -> dict:
-    """
-    Inserts a transaction into the ledger, evaluates SavingsEngine,
-    and returns the decision.
+    merchant: Optional[str],
+    threshold: float,
+    mandate_limit: float,
+) -> Tuple[TransactionRecord, SweepDecision]:
+    """Stages the transaction and scores it. Does NOT commit; callers decide.
+
+    Flushing rather than committing assigns the primary key while leaving the
+    caller free to roll the whole unit of work back if a later step fails.
     """
     record = TransactionRecord(
         user_id=user_id,
@@ -38,12 +60,38 @@ def add_transaction(
         merchant=merchant,
     )
     db.add(record)
-    db.commit()
-    db.refresh(record)
+    db.flush()
 
     history = get_user_income_history(db, user_id)
     engine = SavingsEngine(history, threshold=threshold, mandate_limit=mandate_limit)
     decision = engine.process(Transaction(amount=amount, kind=transaction_type))
+    return record, decision
+
+
+def add_transaction(
+    db: Session,
+    user_id: UserId,
+    amount: float,
+    transaction_type: str,
+    merchant: Optional[str] = None,
+    threshold: float = DEFAULT_THRESHOLD,
+    mandate_limit: float = DEFAULT_MANDATE_LIMIT,
+) -> dict:
+    """Records a transaction and returns the sweep decision without acting on it.
+
+    The sweep itself is authorized separately via POST /api/sweeps, so this
+    stays a pure ingest-and-advise step.
+    """
+    try:
+        record, decision = _ingest_and_evaluate(
+            db, user_id, amount, transaction_type, merchant, threshold, mandate_limit
+        )
+        db.commit()
+        db.refresh(record)
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Failed to record transaction for user %s", user_id)
+        raise
 
     return {
         "transaction_id": str(record.id),
@@ -55,11 +103,79 @@ def add_transaction(
             "reason": decision.reason,
         },
     }
+
+
+def process_transaction_event(
+    db: Session,
+    user_id: UserId,
+    amount: float,
+    transaction_type: str,
+    merchant: Optional[str] = None,
+    threshold: float = 10.0,
+    mandate_limit: float = DEFAULT_MANDATE_LIMIT,
+) -> dict:
+    """Ingests, scores, and if eligible writes the sweep in one transaction.
+
+    Idempotent on transaction_id: a replayed event never produces a second sweep.
+    """
+    try:
+        tx, decision = _ingest_and_evaluate(
+            db, user_id, amount, transaction_type, merchant, threshold, mandate_limit
+        )
+
+        sweep_record = None
+        if decision.eligible:
+            already_swept = (
+                db.query(SavingsSweepRecord)
+                .filter(SavingsSweepRecord.transaction_id == tx.id)
+                .first()
+            )
+            if not already_swept:
+                sweep_record = SavingsSweepRecord(
+                    user_id=user_id,
+                    transaction_id=tx.id,
+                    sweep_amount=decision.amount,
+                    reason=decision.reason,
+                )
+                db.add(sweep_record)
+
+        db.commit()
+        db.refresh(tx)
+        if sweep_record is not None:
+            db.refresh(sweep_record)
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Failed to process transaction event for user %s", user_id)
+        raise
+
+    return {
+        "status": "success",
+        "transaction_id": str(tx.id),
+        "user_id": str(tx.user_id),
+        "amount": float(tx.amount),
+        "transaction_type": tx.transaction_type,
+        "decision": {
+            "amount": decision.amount,
+            "eligible": decision.eligible,
+            "reason": decision.reason,
+        },
+        "sweep": None
+        if sweep_record is None
+        else {
+            "id": str(sweep_record.id),
+            "sweep_amount": float(sweep_record.sweep_amount),
+            "reason": sweep_record.reason,
+            "transaction_id": str(sweep_record.transaction_id),
+            "user_id": str(sweep_record.user_id),
+        },
+    }
+
+
 def execute_sweep(
     db: Session,
-    user_id: Union[str, uuid.UUID],
+    user_id: UserId,
     sweep_amount: float,
-    transaction_id: Optional[Union[str, uuid.UUID]] = None,
+    transaction_id: Optional[UserId] = None,
     reason: str = "UPI AutoPay sweep authorized",
 ) -> SavingsSweepRecord:
     """Records an authorized savings sweep in the savings_sweeps table."""
@@ -69,14 +185,19 @@ def execute_sweep(
         sweep_amount=sweep_amount,
         reason=reason,
     )
-    db.add(sweep)
-    db.commit()
-    db.refresh(sweep)
+    try:
+        db.add(sweep)
+        db.commit()
+        db.refresh(sweep)
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Failed to record sweep for user %s", user_id)
+        raise
     return sweep
 
 
-def get_transactions(db: Session, user_id: Optional[Union[str, uuid.UUID]] = None, limit: int = 50) -> List[dict]:
-    """Retrieves list of transactions."""
+def get_transactions(db: Session, user_id: Optional[UserId] = None, limit: int = 50) -> List[dict]:
+    """Most recent transactions, newest first."""
     query = db.query(TransactionRecord)
     if user_id:
         query = query.filter(TransactionRecord.user_id == user_id)
@@ -95,103 +216,31 @@ def get_transactions(db: Session, user_id: Optional[Union[str, uuid.UUID]] = Non
     ]
 
 
-def get_sweeps(db: Session, user_id: Optional[Union[str, uuid.UUID]] = None, limit: int = 50) -> List[dict]:
-    """Retrieves list of savings sweeps."""
+def _sweep_to_dict(sweep: SavingsSweepRecord, include_user: bool = False) -> dict:
+    """Single serialization shape for a sweep row."""
+    payload = {
+        "id": str(sweep.id),
+        "sweep_amount": float(sweep.sweep_amount),
+        "reason": sweep.reason,
+        "transaction_id": str(sweep.transaction_id) if sweep.transaction_id else None,
+        "created_at": sweep.created_at.isoformat() if sweep.created_at else None,
+    }
+    if include_user:
+        payload["user_id"] = str(sweep.user_id) if sweep.user_id else None
+    return payload
+
+
+def get_sweeps(db: Session, user_id: Optional[UserId] = None, limit: int = 50) -> List[dict]:
+    """Most recent savings sweeps, newest first."""
     query = db.query(SavingsSweepRecord)
     if user_id:
         query = query.filter(SavingsSweepRecord.user_id == user_id)
     records = query.order_by(desc(SavingsSweepRecord.created_at)).limit(limit).all()
-    return [
-        {
-            "id": str(s.id),
-            "user_id": str(s.user_id) if s.user_id else None,
-            "transaction_id": str(s.transaction_id) if s.transaction_id else None,
-            "sweep_amount": float(s.sweep_amount),
-            "reason": s.reason,
-            "created_at": s.created_at.isoformat() if s.created_at else None,
-        }
-        for s in records
-    ]
+    return [_sweep_to_dict(s, include_user=True) for s in records]
 
 
-def process_transaction_event(
-    db: Session,
-    user_id: Union[str, uuid.UUID],
-    amount: float,
-    transaction_type: str,
-    merchant: Optional[str] = None,
-    threshold: float = 10.0,
-    mandate_limit: float = 1000.0,
-) -> dict:
-    """
-    End-to-end transactional pipeline:
-    1. Records transaction.
-    2. Runs SavingsEngine calculation on history + new event.
-    3. If eligible and not already swept (idempotent), records savings_sweep with user_id and transaction_id.
-    """
-    try:
-        # Step 1: Ingest transaction
-        tx = TransactionRecord(
-            user_id=user_id,
-            amount=amount,
-            transaction_type=transaction_type,
-            merchant=merchant,
-        )
-        db.add(tx)
-        db.flush()  # Generates tx.id without committing outer transaction
-
-        # Step 2: Fetch history and process through SavingsEngine
-        history = get_user_income_history(db, user_id)
-        engine = SavingsEngine(history, threshold=threshold, mandate_limit=mandate_limit)
-        decision = engine.process(Transaction(amount=amount, kind=transaction_type))
-
-        sweep_record = None
-        if decision.eligible:
-            # Step 3: Idempotency check - ensure no existing sweep for this transaction_id
-            existing_sweep = db.query(SavingsSweepRecord).filter(
-                SavingsSweepRecord.transaction_id == tx.id
-            ).first()
-
-            if not existing_sweep:
-                sweep_record = SavingsSweepRecord(
-                    user_id=user_id,
-                    transaction_id=tx.id,
-                    sweep_amount=decision.amount,
-                    reason=decision.reason,
-                )
-                db.add(sweep_record)
-
-        db.commit()
-        db.refresh(tx)
-        if sweep_record:
-            db.refresh(sweep_record)
-
-        return {
-            "status": "success",
-            "transaction_id": str(tx.id),
-            "user_id": str(tx.user_id),
-            "amount": float(tx.amount),
-            "transaction_type": tx.transaction_type,
-            "decision": {
-                "amount": decision.amount,
-                "eligible": decision.eligible,
-                "reason": decision.reason,
-            },
-            "sweep": {
-                "id": str(sweep_record.id),
-                "sweep_amount": float(sweep_record.sweep_amount),
-                "reason": sweep_record.reason,
-                "transaction_id": str(sweep_record.transaction_id),
-                "user_id": str(sweep_record.user_id),
-            } if sweep_record else None,
-        }
-    except Exception as e:
-        db.rollback()
-        raise e
-
-
-def get_user_dashboard_stats(db: Session, user_id: Union[str, uuid.UUID]) -> dict:
-    """Aggregates total saved in stash, sweep history, and moving average baseline."""
+def get_user_dashboard_stats(db: Session, user_id: UserId) -> dict:
+    """Stash balance, rolling income baseline, and the last 10 sweeps."""
     total_saved = (
         db.query(func.coalesce(func.sum(SavingsSweepRecord.sweep_amount), 0.0))
         .filter(SavingsSweepRecord.user_id == user_id)
@@ -206,21 +255,11 @@ def get_user_dashboard_stats(db: Session, user_id: Union[str, uuid.UUID]) -> dic
         .all()
     )
 
-    history = get_user_income_history(db, user_id, limit=30)
-    baseline_income = moving_average(history, 30)
+    history = get_user_income_history(db, user_id, limit=INCOME_WINDOW)
 
     return {
         "user_id": str(user_id),
-        "total_stash_balance": round(float(total_saved), 2),
-        "income_30d_baseline": round(baseline_income, 2),
-        "recent_sweeps": [
-            {
-                "id": str(s.id),
-                "sweep_amount": float(s.sweep_amount),
-                "reason": s.reason,
-                "transaction_id": str(s.transaction_id) if s.transaction_id else None,
-                "created_at": s.created_at.isoformat() if s.created_at else None,
-            }
-            for s in sweeps
-        ],
+        "total_stash_balance": round(float(total_saved or 0.0), 2),
+        "income_30d_baseline": round(moving_average(history, INCOME_WINDOW), 2),
+        "recent_sweeps": [_sweep_to_dict(s) for s in sweeps],
     }

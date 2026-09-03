@@ -4,10 +4,10 @@ Transparent thresholds on purpose - an underwriter must be able to read this
 file and explain any decision without a model.
 """
 
+import config
 from schemas import CreditScoreRequest
 
 BASE_SCORE = 300.0
-MIN_SCORE, MAX_SCORE = 0.0, 800.0
 
 # Platforms differ in payout reliability; small nudge, not a verdict.
 PLATFORM_ADJUSTMENT = {
@@ -81,13 +81,13 @@ def calculate_rule_score(payload: CreditScoreRequest) -> float:
 
     score += PLATFORM_ADJUSTMENT.get(payload.primary_gig_platform, 0.0)
 
-    return round(min(max(score, MIN_SCORE), MAX_SCORE), 2)
+    return round(min(max(score, config.MIN_SCORE), config.MAX_SCORE), 2)
 
 
 def categorize(score: float) -> str:
     """Map a 0-800 score onto the product's three bands."""
-    if score >= 600:
+    if score >= config.SCORE_GOOD:
         return "Good"
-    if score >= 400:
+    if score >= config.SCORE_STANDARD:
         return "Standard"
     return "Poor"

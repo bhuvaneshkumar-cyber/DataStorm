@@ -19,7 +19,7 @@ function verifySignatureMiddleware(req, res, next) {
     return next();
   }
 
-  const expectedSecret = process.env.WEBHOOK_SECRET;
+  const expectedSecret = config.webhookSecret;
   const incomingSecret = req.headers['x-webhook-secret'];
   if (!expectedSecret) {
     console.error('[webhookListener] WEBHOOK_SECRET is not set. Refusing request.');

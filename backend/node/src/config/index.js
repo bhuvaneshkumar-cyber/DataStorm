@@ -11,7 +11,13 @@ module.exports = {
   port: Number(process.env.PORT) || 3001,
   nodeEnv: process.env.NODE_ENV || 'development',
   mongoUri: process.env.MONGO_URI || 'mongodb://localhost:27017/gigsave',
-  webhookSecret: process.env.WEBHOOK_SECRET || '',
+
+  // Read live rather than snapshotted at import: this is the only value that can
+  // legitimately change while the process runs (secret rotation), and freezing it
+  // means whichever module loads first decides the secret for everyone else.
+  get webhookSecret() {
+    return process.env.WEBHOOK_SECRET || '';
+  },
 
   // Mirrors the SavingsEngine defaults in savings.py / savingsEngine.js.
   savings: {

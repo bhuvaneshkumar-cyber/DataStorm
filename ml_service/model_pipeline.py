@@ -15,6 +15,7 @@ import shap
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
+import config
 from schemas import CreditScoreRequest
 
 logger = logging.getLogger(__name__)
@@ -34,8 +35,6 @@ FEATURE_ORDER = [
     "active_platform_hours_per_week",
     "resilience_stash_balance",
 ]
-
-MAX_SCORE = 800.0
 
 
 class CreditModelPipeline:
@@ -129,7 +128,7 @@ class CreditModelPipeline:
             proba = self.model.predict_proba(X)[0]
             classes = list(self.model.classes_)
             good_p = float(proba[classes.index(1)]) if 1 in classes else 0.0
-            return round(good_p * MAX_SCORE, 2), round(float(proba.max()), 4), self._explain(X)
+            return round(good_p * config.MAX_SCORE, 2), round(float(proba.max()), 4), self._explain(X)
         except Exception:
             logger.exception("ML prediction failed; degrading to rule engine")
             return None

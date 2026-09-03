@@ -11,8 +11,19 @@ import {
   X,
 } from 'lucide-react';
 
+/** Route ids the app can render. Exported so App and Sidebar cannot drift apart. */
+export type ViewId =
+  | 'dashboard'
+  | 'stash'
+  | 'transactions'
+  | 'credit'
+  | 'ai-insights'
+  | 'resilience'
+  | 'settings'
+  | 'profile';
+
 type NavItem = {
-  id: string;
+  id: ViewId;
   label: string;
   icon: React.ReactNode;
 };
@@ -31,14 +42,23 @@ const bottomNavItems: NavItem[] = [
   { id: 'profile', label: 'Profile', icon: <User size={18} strokeWidth={1.8} /> },
 ];
 
+/** Views that are actually implemented; the rest render an honest placeholder. */
+export const IMPLEMENTED_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(['dashboard', 'credit']);
+
+export const VIEW_LABELS: Record<ViewId, string> = Object.fromEntries(
+  [...mainNavItems, ...bottomNavItems].map((item) => [item.id, item.label]),
+) as Record<ViewId, string>;
+
 type SidebarProps = {
   open: boolean;
   onClose: () => void;
   triggerRef: React.RefObject<HTMLElement | null>;
+  /** Current view. Owned by App so the sidebar and the content cannot disagree. */
+  active: ViewId;
+  onNavigate: (id: ViewId) => void;
 };
 
-export default function Sidebar({ open, onClose, triggerRef }: SidebarProps) {
-  const [activeItem, setActiveItem] = useState('dashboard');
+export default function Sidebar({ open, onClose, triggerRef, active, onNavigate }: SidebarProps) {
   const [closing, setClosing] = useState(false);
   const sidebarRef = useRef<HTMLElement>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
@@ -80,8 +100,8 @@ export default function Sidebar({ open, onClose, triggerRef }: SidebarProps) {
 
   if (!open) return null;
 
-  const handleNavClick = (id: string) => {
-    setActiveItem(id);
+  const handleNavClick = (id: ViewId) => {
+    onNavigate(id);
     // On mobile, close sidebar when a nav item is clicked
     if (window.innerWidth <= 760) {
       handleClose();
@@ -129,10 +149,10 @@ export default function Sidebar({ open, onClose, triggerRef }: SidebarProps) {
               <button
                 key={item.id}
                 ref={index === 0 ? firstItemRef : undefined}
-                className={`sidebar-item${activeItem === item.id ? ' active' : ''}`}
+                className={`sidebar-item${active === item.id ? ' active' : ''}`}
                 type="button"
                 onClick={() => handleNavClick(item.id)}
-                aria-current={activeItem === item.id ? 'page' : undefined}
+                aria-current={active === item.id ? 'page' : undefined}
               >
                 {item.icon}
                 {item.label}
@@ -146,10 +166,10 @@ export default function Sidebar({ open, onClose, triggerRef }: SidebarProps) {
           {bottomNavItems.map((item) => (
             <button
               key={item.id}
-              className={`sidebar-item${activeItem === item.id ? ' active' : ''}`}
+              className={`sidebar-item${active === item.id ? ' active' : ''}`}
               type="button"
               onClick={() => handleNavClick(item.id)}
-              aria-current={activeItem === item.id ? 'page' : undefined}
+              aria-current={active === item.id ? 'page' : undefined}
             >
               {item.icon}
               {item.label}

@@ -1,46 +1,80 @@
+"""SQLAlchemy engine, session factory, and connection health probe.
+
+A missing or unreachable DATABASE_URL is reported through /health and a 503 on
+data routes rather than raised at import time — an unimportable module takes the
+health endpoint down with it, which is exactly when you most need it to answer.
+"""
+
+import logging
 import os
 from pathlib import Path
+from typing import Iterator, Optional
+
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
-# Load environment variables from .env in backend or project root
-current_dir = Path(__file__).resolve().parent
-root_dir = current_dir.parent
+logger = logging.getLogger(__name__)
 
-for env_path in [current_dir / ".env", root_dir / ".env", root_dir / ".env.txt"]:
-    if env_path.exists():
-        load_dotenv(dotenv_path=env_path)
-        break
-else:
-    load_dotenv()
+CURRENT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = CURRENT_DIR.parent
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable is not set. Check your .env configuration.")
-
-# SQLAlchemy 2.0+ requires postgresql:// instead of postgres://
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-# Configure SQLAlchemy Engine with pooling for Supabase connection pooler
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,       # Automatically checks if connection is alive before using
-    pool_recycle=300,         # Recycle connections every 5 minutes
-    pool_size=10,             # Keep 10 persistent connections in pool
-    max_overflow=20,          # Allow up to 20 temporary overflow connections
-    connect_args={"connect_timeout": 10},
-)
-
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-def get_db():
-    """FastAPI / context dependency generator for database sessions."""
+class DatabaseUnavailable(SQLAlchemyError):
+    """Raised when no engine could be built. Subclasses SQLAlchemyError so the
+    app's existing database-error handler turns it into a 503 automatically."""
+
+
+def _load_environment() -> None:
+    """Loads the first .env found in backend/ then the project root."""
+    for env_path in (CURRENT_DIR / ".env", ROOT_DIR / ".env", ROOT_DIR / ".env.txt"):
+        if env_path.exists():
+            load_dotenv(dotenv_path=env_path)
+            return
+    load_dotenv()
+
+
+def _normalize_url(url: str) -> str:
+    """SQLAlchemy 2.0 dropped the legacy `postgres://` scheme."""
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql://", 1)
+    return url
+
+
+def _build_engine(url: Optional[str]) -> Optional[Engine]:
+    """Builds a pooled engine, or None if the URL is missing/invalid."""
+    if not url:
+        logger.error("DATABASE_URL is not set. Database routes will return 503.")
+        return None
+    try:
+        return create_engine(
+            _normalize_url(url),
+            pool_pre_ping=True,   # drop dead connections before handing them out
+            pool_recycle=300,     # Supabase's pooler closes idle connections
+            pool_size=10,
+            max_overflow=20,
+            connect_args={"connect_timeout": 10},
+        )
+    except (SQLAlchemyError, ValueError):
+        logger.exception("Failed to create the SQLAlchemy engine")
+        return None
+
+
+_load_environment()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+engine = _build_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine) if engine else None
+
+
+def get_db() -> Iterator[Session]:
+    """FastAPI dependency yielding a session that is always closed."""
+    if SessionLocal is None:
+        raise DatabaseUnavailable("DATABASE_URL is not configured.")
     db = SessionLocal()
     try:
         yield db
@@ -49,10 +83,17 @@ def get_db():
 
 
 def check_db_connection() -> dict:
-    """Tests the database connection against Supabase PostgreSQL."""
+    """Probes the live connection. Never raises — this backs /health."""
+    if engine is None:
+        return {
+            "status": "error",
+            "error": "DATABASE_URL is not configured.",
+            "database_url_configured": False,
+        }
     try:
         with engine.connect() as conn:
             result = conn.execute(text("SELECT 1;")).scalar()
-            return {"status": "connected", "result": result, "database_url_configured": True}
-    except Exception as e:
-        return {"status": "error", "error": str(e), "database_url_configured": True}
+        return {"status": "connected", "result": result, "database_url_configured": True}
+    except SQLAlchemyError as exc:
+        logger.warning("Database health probe failed: %s", exc)
+        return {"status": "error", "error": str(exc), "database_url_configured": True}

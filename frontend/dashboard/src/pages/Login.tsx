@@ -1,23 +1,27 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { login } from '@/lib/api';
+import { login, User } from '@/lib/api';
 
-export default function Login({ setUser }: { setUser: (u: any) => void }) {
+export default function Login({ setUser }: { setUser: (u: User) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('worker');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
     try {
       const res = await login({ email, password, expected_role: role });
       setUser(res.user);
       navigate(role === 'lender' ? '/lender' : '/');
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -44,10 +48,13 @@ export default function Login({ setUser }: { setUser: (u: any) => void }) {
             </select>
           </div>
           {error && <div className="error-msg">{error}</div>}
-          <button type="submit" className="primary-button">Sign In</button>
+          <button type="submit" className="primary-button" disabled={loading}>
+            {loading ? 'Signing in...' : 'Sign In'}
+          </button>
         </form>
+
         <p className="auth-footer">
-          Don't have an account? <Link to="/register">Create one</Link>
+          Don&apos;t have an account? <Link to="/register">Create one</Link>
         </p>
       </div>
     </div>

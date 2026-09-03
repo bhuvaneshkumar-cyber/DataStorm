@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react';
-import { fetchInsuranceRecs } from '@/lib/api';
+import { fetchInsuranceRecs, InsuranceRecommendation } from '@/lib/api';
 import { ShieldCheck, Info } from 'lucide-react';
 
 export default function Insurance() {
-  const [recs, setRecs] = useState<any[]>([]);
+  const [recs, setRecs] = useState<InsuranceRecommendation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    fetchInsuranceRecs().then(setRecs).finally(() => setLoading(false));
+    fetchInsuranceRecs()
+      .then(setRecs)
+      .catch(() => setError('Failed to load recommendations.'))
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div className="loading">Loading Insurance Recommendations...</div>;
@@ -19,6 +23,8 @@ export default function Insurance() {
         <h2>Micro-Insurance Recommendations</h2>
         <p>Tailored coverage based on your income volatility and risk profile.</p>
       </div>
+
+      {error && <div className="error-msg">{error}</div>}
 
       <div className="recs-grid">
         {recs.map((rec, i) => (
@@ -35,10 +41,12 @@ export default function Insurance() {
                 <span>Key Benefit: {rec.primary_benefit}</span>
               </div>
             </div>
-            <button className="secondary-button">Learn More & Apply</button>
+            <button className="secondary-button">Learn More &amp; Apply</button>
           </div>
         ))}
-        {recs.length === 0 && <div className="empty">No recommendations available at this time.</div>}
+        {recs.length === 0 && !error && (
+          <div className="empty-state">No recommendations available at this time.</div>
+        )}
       </div>
     </div>
   );

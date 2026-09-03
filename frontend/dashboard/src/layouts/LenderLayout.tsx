@@ -1,8 +1,18 @@
 import { Outlet, useNavigate } from 'react-router-dom';
 import { LayoutDashboard } from 'lucide-react';
 import Sidebar from '@/components/Sidebar';
+import { User } from '@/lib/api';
 
-export default function LenderLayout({ user, setUser }: { user: any, setUser: (u: any) => void }) {
+interface LenderLayoutProps {
+  user: User;
+  setUser: (u: User | null) => void;
+}
+
+const NAV_ITEMS = [
+  { label: 'Dashboard', icon: LayoutDashboard, path: '/lender' },
+];
+
+export default function LenderLayout({ user, setUser }: LenderLayoutProps) {
   const navigate = useNavigate();
 
   const handleLogout = () => {
@@ -11,17 +21,13 @@ export default function LenderLayout({ user, setUser }: { user: any, setUser: (u
     navigate('/login');
   };
 
-  const navItems = [
-    { label: 'Dashboard', icon: LayoutDashboard, path: '/lender' },
-  ];
-
   return (
     <div className="worker-shell">
       <Sidebar
         brandName="Lender Portal"
         brandLogo="L"
         brandColor="#f59e0b"
-        navItems={navItems}
+        navItems={NAV_ITEMS}
         user={user}
         onLogout={handleLogout}
       />
@@ -29,7 +35,7 @@ export default function LenderLayout({ user, setUser }: { user: any, setUser: (u
         <header className="top-bar">
           <h1 className="page-title">Lender Management Console</h1>
           <div className="top-actions">
-             <span className="user-greeting">Welcome, {user.name}</span>
+            <span className="user-greeting">Welcome, {user.name}</span>
           </div>
         </header>
         <div className="page-body">

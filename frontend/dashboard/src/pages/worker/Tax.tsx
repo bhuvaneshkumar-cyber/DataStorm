@@ -1,63 +1,75 @@
 import { useEffect, useState } from 'react';
-import { fetchTaxSummary } from '@/lib/api';
-import { FileText, AlertCircle } from 'lucide-react';
+import { fetchTaxSummary, TaxSummary } from '@/lib/api';
+import { FileText, AlertCircle, Calculator, Calendar } from 'lucide-react';
 
 export default function Tax() {
-  const [summary, setSummary] = useState<any>(null);
+  const [summary, setSummary] = useState<TaxSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    fetchTaxSummary().then(setSummary).finally(() => setLoading(false));
+    fetchTaxSummary()
+      .then(setSummary)
+      .catch(() => setError('Failed to load tax data.'))
+      .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="loading">Loading Tax Summary...</div>;
+  if (loading) return <div className="loading">Calculating tax liabilities...</div>;
+  if (error) return <div className="error">{error}</div>;
   if (!summary) return <div className="error">Failed to load tax data.</div>;
 
   return (
     <div className="tax-page">
       <div className="tax-hero">
-        <FileText size={48} />
-        <h2>Tax Liability Snapshot</h2>
-        <p>Automated estimate based on your logged gig income.</p>
+        <FileText size={48} color="var(--primary)" />
+        <h2 className="tax-hero-title">Tax Liability Snapshot</h2>
+        <p className="tax-hero-sub">
+          Automated presumptive taxation estimate under Section 44AD of the Income Tax Act.
+        </p>
       </div>
 
       <div className="tax-grid">
         <div className="tax-main">
           <div className="tax-card">
-            <h3>Annualized Estimate</h3>
+            <div className="tax-label">ESTIMATED TOTAL TAX</div>
             <div className="tax-value">₹{summary.total_tax?.toLocaleString()}</div>
-            <div className="tax-sub">Estimated Total Tax for {summary.financial_year}</div>
+            <div className="tax-sub">Financial Year: {summary.financial_year}</div>
           </div>
 
-          <div className="tax-details">
-            <h4>Breakdown</h4>
-            <div className="detail-row">
-              <span>Gross Income (Annualised)</span>
-              <strong>₹{summary.annualised_gross_income?.toLocaleString()}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Taxable Income (after 44AD)</span>
-              <strong>₹{summary.taxable_income?.toLocaleString()}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Monthly Set-aside</strong>
-              <strong className="text-highlight">₹{summary.monthly_set_aside?.toLocaleString()}</strong>
+          <div className="card">
+            <div className="card-title"><Calculator size={18} /> Calculation Breakdown</div>
+            <div className="tax-details">
+              <div className="detail-row">
+                <span>Annualised Gross Income</span>
+                <strong>₹{summary.annualised_gross_income?.toLocaleString()}</strong>
+              </div>
+              <div className="detail-row">
+                <span>Presumptive Taxable Income (6%/8%)</span>
+                <strong>₹{summary.taxable_income?.toLocaleString()}</strong>
+              </div>
+              <div className="detail-row detail-row-last">
+                <span className="detail-row-highlight">Monthly Set-aside Recommendation</span>
+                <strong className="text-highlight">₹{summary.monthly_set_aside?.toLocaleString()}</strong>
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="tax-sidebar">
-          <div className="notes-card">
-            <h3>Important Notes</h3>
-            <ul>
-              {summary.notes?.map((n: string, i: number) => (
-                <li key={i}>{n}</li>
+        <div className="side-col">
+          <div className="card">
+            <div className="card-title"><Calendar size={18} /> Compliance Notes</div>
+            <ul className="notes-list">
+              {summary.notes?.map((n, i) => (
+                <li key={i} className="note-item">{n}</li>
               ))}
             </ul>
             {summary.gst_registration_required && (
               <div className="gst-alert">
-                <AlertCircle size={16} />
-                <span>GST Registration Required!</span>
+                <AlertCircle size={18} />
+                <div>
+                  <strong className="gst-alert-title">GST Registration Required</strong>
+                  <span className="gst-alert-sub">Your turnover exceeds the mandatory threshold.</span>
+                </div>
               </div>
             )}
           </div>

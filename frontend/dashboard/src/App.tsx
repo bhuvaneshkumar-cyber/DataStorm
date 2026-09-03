@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
+import { getProfile, User } from './lib/api';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import WorkerLayout from './layouts/WorkerLayout';
@@ -15,21 +16,19 @@ import Bot from './pages/worker/Bot';
 import LenderDashboard from './pages/lender/LenderDashboard';
 
 function App() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
-    if (token) {
-      import('./lib/api').then(api => {
-        api.getProfile()
-          .then(u => setUser(u))
-          .catch(() => localStorage.removeItem('auth_token'))
-          .finally(() => setLoading(false));
-      });
-    } else {
+    if (!token) {
       setLoading(false);
+      return;
     }
+    getProfile()
+      .then(setUser)
+      .catch(() => localStorage.removeItem('auth_token'))
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div className="loading-screen">Loading...</div>;
@@ -37,10 +36,19 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={!user ? <Login setUser={setUser} /> : <Navigate to={user.role === 'lender' ? '/lender' : '/'} />} />
-        <Route path="/register" element={!user ? <Register setUser={setUser} /> : <Navigate to="/" />} />
+        <Route
+          path="/login"
+          element={!user ? <Login setUser={setUser} /> : <Navigate to={user.role === 'lender' ? '/lender' : '/'} />}
+        />
+        <Route
+          path="/register"
+          element={!user ? <Register setUser={setUser} /> : <Navigate to={user.role === 'lender' ? '/lender' : '/'} />}
+        />
 
-        <Route path="/" element={user?.role === 'worker' ? <WorkerLayout user={user} setUser={setUser} /> : <Navigate to="/login" />}>
+        <Route
+          path="/"
+          element={user?.role === 'worker' ? <WorkerLayout user={user} setUser={setUser} /> : <Navigate to="/login" />}
+        >
           <Route index element={<Overview />} />
           <Route path="expenses" element={<Expenses />} />
           <Route path="platforms" element={<Platforms />} />
@@ -49,9 +57,12 @@ function App() {
           <Route path="insurance" element={<Insurance />} />
           <Route path="tax" element={<Tax />} />
           <Route path="bot" element={<Bot />} />
-        </Route>>
+        </Route>
 
-        <Route path="/lender" element={user?.role === 'lender' ? <LenderLayout user={user} setUser={setUser} /> : <Navigate to="/login" />}>
+        <Route
+          path="/lender"
+          element={user?.role === 'lender' ? <LenderLayout user={user} setUser={setUser} /> : <Navigate to="/login" />}
+        >
           <Route index element={<LenderDashboard />} />
         </Route>
 

@@ -1,67 +1,119 @@
-import { useEffect, useState } from 'react';
-import { askBot, fetchBotTopics } from '@/lib/api';
-import { MessageSquare, Send, Sparkles } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
+import { askBot, fetchBotTopics, BotResponse } from '@/lib/api';
+import { Send, Sparkles, Bot as BotIcon, User } from 'lucide-react';
+
+interface Message {
+  role: 'user' | 'bot';
+  text: string;
+  confident: boolean;
+}
 
 export default function Bot() {
   const [query, setQuery] = useState('');
-  const [messages, setMessages] = useState<{q: string, a: string, conf: boolean}[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [topics, setTopics] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetchBotTopics().then(res => setTopics(res.topics));
+    fetchBotTopics()
+      .then(res => {
+        setTopics(Array.isArray(res.topics) ? res.topics : []);
+      })
+      .catch(() => setTopics([]));
   }, []);
 
-  const handleAsk = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query) return;
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const handleAsk = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    setMessages(prev => [...prev, { role: 'user', text: trimmed, confident: true }]);
     setLoading(true);
+    setError('');
+
     try {
-      const res = await askBot(query);
-      setMessages(prev => [...prev, { q: query, a: res.answer, conf: res.confident }]);
-      setQuery('');
-    } catch (err: any) {
-      alert(err.message);
+      const res: BotResponse = await askBot(trimmed);
+      setMessages(prev => [...prev, { role: 'bot', text: res.answer, confident: res.confident }]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to reach the policy bot.';
+      setError(msg);
+      setMessages(prev => [...prev, { role: 'bot', text: `Error: ${msg}`, confident: false }]);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleAsk(query);
+    setQuery('');
   };
 
   return (
     <div className="bot-page">
       <div className="bot-container">
         <div className="bot-header">
-          <MessageSquare size={24} />
-          <div>
-            <h3>Policy Bot</h3>
-            <p>Ask me anything about our financial policies</p>
+          <div className="bot-brand">
+            <div className="bot-icon-wrap"><BotIcon size={24} /></div>
+            <div>
+              <h3 className="bot-title">Policy Intelligence Bot</h3>
+              <p className="bot-subtitle">AI-Powered Financial Guide</p>
+            </div>
           </div>
         </div>
 
-        <div className="chat-window">
+        <div className="chat-window" ref={scrollRef}>
           {messages.length === 0 && (
             <div className="chat-empty">
-              <Sparkles size={48} />
-              <p>Get started by asking a question or picking a topic.</p>
+              <div className="empty-icon"><Sparkles size={48} color="var(--primary)" /></div>
+              <h3 className="chat-empty-title">How can I help you today?</h3>
+              <p>Select a common topic or ask a specific question about loans, tax, or payouts.</p>
               <div className="topic-grid">
                 {topics.map(t => (
-                  <button key={t} onClick={() => { setQuery(t); }} className="topic-btn">{t}</button>
+                  <button key={t} onClick={() => handleAsk(t)} className="topic-btn">{t}</button>
                 ))}
               </div>
             </div>
           )}
+
           {messages.map((m, i) => (
-            <div key={i} className="chat-msg">
-              <div className="msg-user">{m.q}</div>
-              <div className={`msg-bot ${!m.conf ? 'unconfident' : ''}`}>{m.a}</div>
+            <div key={i} className={`chat-msg-wrap ${m.role}`}>
+              <div className="msg-avatar">
+                {m.role === 'user' ? <User size={16} /> : <BotIcon size={16} />}
+              </div>
+              <div className={`chat-bubble ${m.role === 'bot' && !m.confident ? 'unconfident' : ''}`}>
+                {m.text}
+              </div>
             </div>
           ))}
-          {loading && <div className="msg-bot loading">Thinking...</div>}
+
+          {loading && (
+            <div className="chat-msg-wrap bot">
+              <div className="msg-avatar"><BotIcon size={16} /></div>
+              <div className="chat-bubble loading-bubble">Thinking...</div>
+            </div>
+          )}
         </div>
 
-        <form onSubmit={handleAsk} className="chat-input">
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Ask about loans, tax, or sweeps..." required />
-          <button type="submit" disabled={loading}><Send size={20} /></button>
+        {error && <div className="error-msg" style={{ margin: '0 24px 8px' }}>{error}</div>}
+
+        <form onSubmit={handleSubmit} className="chat-input">
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Type your question here..."
+            disabled={loading}
+          />
+          <button type="submit" disabled={loading || !query.trim()}>
+            <Send size={20} />
+          </button>
         </form>
       </div>
     </div>

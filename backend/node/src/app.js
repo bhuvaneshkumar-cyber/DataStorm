@@ -11,6 +11,7 @@ require('dotenv').config();
 
 const express        = require('express');
 const bodyParser     = require('body-parser');
+const mongoose       = require('mongoose');
 const webhookRoutes  = require('./routes/webhookRoutes');
 
 const app = express();
@@ -31,9 +32,19 @@ app.use(bodyParser.urlencoded({ extended: false }));
 // ---------------------------------------------------------------------------
 
 // Health check — unauthenticated, used by load balancers and teammates.
-app.get('/health', (_req, res) =>
-  res.json({ status: 'ok', service: 'gigsave-backend-node', ts: new Date().toISOString() })
-);
+app.get('/health', (_req, res) => {
+  const health = {
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  };
+
+  if (process.env.MONGODB_URI || process.env.MONGO_URI) {
+    health.db = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  }
+
+  return res.json(health);
+});
 
 // All webhook endpoints live under /webhooks.
 // Authentication (x-webhook-secret header) is enforced inside the router.
@@ -46,6 +57,9 @@ app.use('/webhooks', webhookRoutes);
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
   console.error('[app] Unhandled error:', err);
+  if (err instanceof SyntaxError && err.status === 400 && err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Malformed JSON request body.' });
+  }
   res.status(500).json({ error: 'Internal server error.' });
 });
 

@@ -62,6 +62,8 @@ const VALID_TYPES = ['debit', 'payout'];
  * @returns {Promise<{ statusCode: number, body: object }>}
  */
 async function handleTransactionWebhook(payload) {
+  payload = payload && typeof payload === 'object' ? payload : {};
+
   // ── Step 1: Validate required fields ──────────────────────────────────────
   const missing = REQUIRED_FIELDS.filter(
     (f) => payload[f] === undefined || payload[f] === null || payload[f] === ''

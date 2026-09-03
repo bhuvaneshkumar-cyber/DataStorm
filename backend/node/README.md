@@ -1,113 +1,116 @@
-﻿# GigSave – Node.js Backend (`backend/node/`)
+# GigSave Node.js Backend
 
-> **Phase 3 – Backend & Fintech Logic Lead**
-> Node.js port of the savings engine originally prototyped in `backend/savings.py`.
-> The Python prototype is **reference-only** — do not modify it.
+GigSave is an Express and Mongoose backend for a gig-worker resilience savings
+workflow. It accepts bank debit and platform payout webhooks, calculates
+round-up or income-smoothing contributions, accumulates pending savings, and
+authorizes a sweep when the minimum threshold and mandate cap allow it.
 
----
+## Folder structure
 
-## Folder layout
-
-```
-backend/
-├── savings.py          ← Python prototype (REFERENCE ONLY – do not touch)
-├── test_savings.py     ← Python tests     (REFERENCE ONLY – do not touch)
-└── node/               ← All Node.js work lives here
-    ├── src/
-    │   ├── config/
-    │   │   ├── index.js        env + constants loader (dotenv)
-    │   │   └── db.js           Mongoose connection helper
-    │   ├── models/
-    │   │   ├── Transaction.js  Mongoose schema – debit / platform_payout events
-    │   │   └── SavingsAccount.js Mongoose schema – per-user pending state
-    │   ├── services/
-    │   │   └── savingsEngine.js  Core savings logic (round-up, income smoothing, sweep decision)
-    │   ├── listeners/
-    │   │   └── webhookListener.js  Inbound webhook handler (HMAC verify -> process -> persist)
-    │   ├── routes/
-    │   │   └── webhookRoutes.js    Express router – POST /webhooks/*
-    │   ├── utils/
-    │   │   └── index.js        Shared helpers
-    │   ├── app.js              Express app factory + middleware wiring
-    │   └── server.js           HTTP server entry point (reads PORT from env)
-    ├── tests/                  Jest test suite (mirrors test_savings.py cases)
-    ├── .env.example            Environment variable template
-    ├── .gitignore
-    ├── package.json            Exact-pinned dependencies (no ^ or ~)
-    └── README.md               ← you are here
+```text
+backend/node/
+├── src/
+│   ├── app.js                    Express app factory and health endpoint
+│   ├── server.js                 HTTP server entry point
+│   ├── config/                   Configuration and database placeholders
+│   ├── listeners/webhookListener.js
+│   ├── models/                   Mongoose models
+│   ├── routes/webhookRoutes.js   Authenticated webhook routes
+│   ├── services/savingsEngine.js Savings calculations and persistence flow
+│   └── utils/
+├── tests/                        Jest and Supertest tests
+├── package.json
+└── README.md
 ```
 
----
+## Install and run
 
-## Business logic (ported from `savings.py`)
+Prerequisites: Node.js 18 or newer and a local MongoDB instance.
 
-| Function | Rule |
-|---|---|
-| `roundUp(amount, multiple=50)` | `(50 - amount % 50) % 50` – e.g. ₹132 → ₹18 round-up |
-| `movingAverage(values, window=30)` | Mean of last 30 elements; empty → 0 |
-| `incomeSurplus(current, history, pct=0.10)` | `max(0, current − avg) × pct`, 2 d.p. |
-| `sweepDecision(roundups, surplus, threshold=100, mandateLimit=1000)` | eligible iff total ∈ [₹100, ₹1000] |
-| `SavingsEngine` | Stateful accumulator; `process()` adds events; `authorizeAndReset()` clears on sweep |
-
----
-
-## Quick start
-
-### Prerequisites
-- Node.js ≥ 18
-- MongoDB running locally **or** an Atlas connection string
-
-### 1 – Configure environment
-
-```bash
-# from backend/node/
-cp .env.example .env
-# Edit .env – set MONGO_URI and any other values
-```
-
-### 2 – Install dependencies
-
-```bash
-# from backend/node/
+```powershell
+cd backend/node
 npm install
-```
-
-### 3 – Start the dev server (auto-restarts on file changes)
-
-```bash
 npm run dev
 ```
 
-The server starts on `http://localhost:3001` (override via `PORT` in `.env`).
+The development server listens on `http://localhost:3001` by default. Set
+`PORT` to use another port. Use `npm start` for a non-watch start.
 
-Verify it is running:
+## Environment variables
 
-```bash
-curl http://localhost:3001/health
-# {"status":"ok","service":"gigsave-backend-node"}
+Create `backend/node/.env` with:
+
+```dotenv
+PORT=3001
+WEBHOOK_SECRET=replace-with-a-long-random-secret
+MONGODB_URI=mongodb://127.0.0.1:27017/gigsave
 ```
 
-### 4 – Run tests
+`WEBHOOK_SECRET` is required for webhook requests. `MONGODB_URI` (or the
+legacy alias `MONGO_URI`) identifies the database and enables database status
+on `/health`. The current project uses local MongoDB; the database connection
+helper is still being integrated into server startup.
 
-```bash
+## Tests
+
+Tests mock Mongoose models and the savings engine where appropriate, so they do
+not require a running database.
+
+```powershell
+cd backend/node
 npm test
 ```
 
----
+## Webhook endpoint
 
-## Available npm scripts
+`POST /webhooks/transaction` requires the `x-webhook-secret` header and a JSON
+body containing `userId`, `type` (`debit` or `payout`), `amount`, `source`, and
+an ISO 8601 `timestamp`. `transactionId` is optional; when omitted, the
+listener derives a deterministic ID for idempotent retries.
 
-| Script | Command | Purpose |
-|---|---|---|
-| `npm start` | `node src/server.js` | Production start |
-| `npm run dev` | `nodemon src/server.js` | Dev server with hot-reload |
-| `npm test` | `jest --runInBand --forceExit` | Run Jest test suite |
+Example request:
 
----
+```http
+POST /webhooks/transaction HTTP/1.1
+Host: localhost:3001
+Content-Type: application/json
+x-webhook-secret: replace-with-a-long-random-secret
 
-## Important constraints
+{
+  "userId": "user-123",
+  "type": "debit",
+  "amount": 132,
+  "source": "HDFC Bank",
+  "timestamp": "2026-09-03T12:00:00.000Z",
+  "transactionId": "bank-tx-456"
+}
+```
 
-- **Do NOT modify** `backend/savings.py` or `backend/test_savings.py`.
-- **Do NOT touch** the `frontend/` folder.
-- Keep all Phase 3 work inside `backend/node/`.
-- Dependency versions are **exact-pinned** in `package.json` — do not add `^` or `~` ranges without team sign-off.
+Example successful response:
+
+```json
+{
+  "transactionId": "bank-tx-456",
+  "swept": false,
+  "sweptAmount": 0,
+  "newBalance": 0,
+  "pendingAfter": 18,
+  "reason": "minimum threshold not reached",
+  "wasCapped": false
+}
+```
+
+Malformed payloads return `400`. Authentication failures return `401`, and
+processing or database failures return `500` with an error message.
+
+## Health check
+
+`GET /health` is unauthenticated and returns `status`, process `uptime`, and an
+ISO `timestamp`. When `MONGODB_URI` or `MONGO_URI` is configured it also
+returns `db` as `connected` or `disconnected` without attempting a connection.
+
+## Demo database note
+
+This backend currently uses a local MongoDB setup. Before the demo, the team
+must confirm a shared MongoDB Atlas connection string, credentials, network
+access, and the final environment-variable name.

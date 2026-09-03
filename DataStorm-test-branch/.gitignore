@@ -2,7 +2,5 @@ __pycache__/
 *.pyc
 .env
 .env.*
-.env.txt
 !.env.example
 node_modules/
-.venv_ml/

@@ -110,8 +110,13 @@ router.post(
   '/transaction',
   requireWebhookSecret,
   async (req, res) => {
-    const result = await handleTransactionWebhook(req.body);
-    return res.status(result.statusCode).json(result.body);
+    try {
+      const result = await handleTransactionWebhook(req.body);
+      return res.status(result.statusCode).json(result.body);
+    } catch (err) {
+      console.error('[webhookRoutes] /transaction error:', err);
+      return res.status(500).json({ error: 'Internal processing error.' });
+    }
   }
 );
 
@@ -142,7 +147,7 @@ router.post(
   '/sweep',
   requireWebhookSecret,
   async (req, res) => {
-    const { userId } = req.body;
+    const { userId } = req.body || {};
 
     if (!userId) {
       return res.status(400).json({ error: 'userId is required.' });

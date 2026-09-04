@@ -30,7 +30,7 @@ app.add_middleware(
 class TransactionCreate(BaseModel):
     user_id: uuid.UUID
     amount: float = Field(..., gt=0, description="Transaction amount in rupees")
-    transaction_type: str = Field(..., description="'debit' or 'platform_payout'")
+    transaction_type: str = Field(..., description="'debit' or 'payout'")
     merchant: Optional[str] = None
     threshold: Optional[float] = 100.0
     mandate_limit: Optional[float] = 1000.0
@@ -80,14 +80,14 @@ def list_transactions(user_id: Optional[uuid.UUID] = None, limit: int = 50, db: 
 @app.post("/api/transactions", status_code=status.HTTP_201_CREATED)
 def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)):
     """Ingests bank debits / platform payouts and evaluates savings sweep eligibility."""
-    if payload.transaction_type not in ("debit", "platform_payout"):
-        raise HTTPException(status_code=400, detail="transaction_type must be 'debit' or 'platform_payout'")
+    if payload.transaction_type not in webhooks.WEBHOOK_TYPE_TO_LEDGER:
+        raise HTTPException(status_code=400, detail="transaction_type must be 'debit' or 'payout'")
 
     result = db_service.add_transaction(
         db=db,
         user_id=payload.user_id,
         amount=payload.amount,
-        transaction_type=payload.transaction_type,
+        transaction_type=webhooks.WEBHOOK_TYPE_TO_LEDGER[payload.transaction_type],
         merchant=payload.merchant,
         threshold=payload.threshold,
         mandate_limit=payload.mandate_limit,

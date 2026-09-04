@@ -3,10 +3,7 @@ import {
   ArrowLeftRight,
   CreditCard,
   LayoutDashboard,
-  Settings,
   ShieldCheck,
-  Sparkles,
-  User,
   Wallet,
   X,
 } from 'lucide-react';
@@ -17,18 +14,13 @@ type NavItem = {
   icon: React.ReactNode;
 };
 
+// Scoped to the two shipped features: micro-savings (dashboard, stash, the
+// transactions that feed round-ups) and alternative credit scoring.
 const mainNavItems: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} strokeWidth={1.8} /> },
   { id: 'stash', label: 'Stash', icon: <Wallet size={18} strokeWidth={1.8} /> },
   { id: 'transactions', label: 'Transactions', icon: <ArrowLeftRight size={18} strokeWidth={1.8} /> },
   { id: 'credit', label: 'Credit', icon: <CreditCard size={18} strokeWidth={1.8} /> },
-  { id: 'ai-insights', label: 'AI Insights', icon: <Sparkles size={18} strokeWidth={1.8} /> },
-  { id: 'resilience', label: 'Resilience', icon: <ShieldCheck size={18} strokeWidth={1.8} /> },
-];
-
-const bottomNavItems: NavItem[] = [
-  { id: 'settings', label: 'Settings', icon: <Settings size={18} strokeWidth={1.8} /> },
-  { id: 'profile', label: 'Profile', icon: <User size={18} strokeWidth={1.8} /> },
 ];
 
 type SidebarProps = {
@@ -141,21 +133,6 @@ export default function Sidebar({ open, onClose, triggerRef }: SidebarProps) {
           </div>
         </div>
 
-        {/* Bottom section */}
-        <div className="sidebar-bottom">
-          {bottomNavItems.map((item) => (
-            <button
-              key={item.id}
-              className={`sidebar-item${activeItem === item.id ? ' active' : ''}`}
-              type="button"
-              onClick={() => handleNavClick(item.id)}
-              aria-current={activeItem === item.id ? 'page' : undefined}
-            >
-              {item.icon}
-              {item.label}
-            </button>
-          ))}
-        </div>
       </nav>
     </>
   );

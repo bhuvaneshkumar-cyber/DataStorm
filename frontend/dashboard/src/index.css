@@ -16,9 +16,6 @@
   --card: 0 0% 100%;
   --card-foreground: 245 21% 18%;
   --card-border: 250 35% 92%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 245 21% 18%;
-  --popover-border: 250 35% 89%;
   --primary: 255 72% 67%;
   --primary-foreground: 0 0% 100%;
   --secondary: 252 100% 95%;
@@ -86,12 +83,6 @@ img { display: block; max-width: 100%; }
 .header-actions { display: flex; align-items: center; gap: 8px; position: relative; }
 .icon-button { width: 38px; height: 38px; border: 1px solid transparent; background: transparent; border-radius: 12px; color: hsl(247 12% 49%); display: grid; place-items: center; transition: background .2s, transform .2s, color .2s; }
 .icon-button:hover { background: hsl(var(--secondary)); color: hsl(255 45% 36%); transform: translateY(-1px); }
-.avatar-button { width: 36px; height: 36px; border: 2px solid white; border-radius: 50%; background: hsl(255 65% 88%); color: hsl(255 45% 36%); font: 700 12px Manrope, sans-serif; box-shadow: 0 0 0 1px hsl(var(--border)); }
-.header-popover { position: absolute; right: 0; top: 48px; width: 220px; padding: 12px; border: 1px solid hsl(var(--border)); border-radius: 16px; background: white; box-shadow: var(--shadow-lg); z-index: 30; animation: pop .2s ease-out; }
-.popover-name { font: 700 13px Manrope, sans-serif; padding: 5px 8px 10px; border-bottom: 1px solid hsl(var(--border)); }
-.popover-name small { display: block; color: hsl(var(--muted-foreground)); font: 400 11px var(--app-font-sans); margin-top: 3px; }
-.popover-action { width: 100%; margin-top: 5px; padding: 9px 8px; background: transparent; border: 0; border-radius: 8px; text-align: left; color: hsl(var(--foreground)); font-size: 12px; display: flex; align-items: center; gap: 7px; }
-.popover-action:hover { background: hsl(var(--secondary)); }
 
 /* ----- Main layout ----- */
 .dashboard-main { max-width: 1380px; margin: 0 auto; padding: 36px 32px 64px; }
@@ -147,7 +138,6 @@ img { display: block; max-width: 100%; }
 .factor-icon { color: hsl(var(--primary)); flex: 0 0 auto; }
 .info-link { display: inline-flex; gap: 5px; align-items: center; color: hsl(255 45% 53%); font-size: 11px; font-weight: 700; border: 0; padding: 0; background: none; }
 .info-link:hover { color: hsl(255 45% 36%); text-decoration: underline; }
-.credit-explain { margin: 0 23px; padding: 11px 12px; border-radius: 11px; background: hsl(252 100% 97%); color: hsl(247 12% 42%); font-size: 11px; line-height: 1.45; animation: rise .25s ease-out; }
 
 /* ----- Savings card ----- */
 .savings-card { min-height: 142px; }
@@ -165,20 +155,6 @@ img { display: block; max-width: 100%; }
 .sweep-label { margin-top: 7px; text-align: right; color: hsl(var(--muted-foreground)); font-size: 10px; }
 
 /* ----- AI Coach card ----- */
-.coach-card { position: relative; overflow: hidden; padding: 22px 23px; background: linear-gradient(135deg, #fff 0%, #fbfaff 62%, #f2eeff 100%); }
-.coach-card::before { content: ''; position: absolute; top: -55px; right: -40px; width: 190px; height: 190px; border-radius: 50%; background: rgba(212, 198, 255, .33); filter: blur(2px); }
-.coach-content { position: relative; z-index: 1; }
-.coach-heading { display: flex; align-items: center; gap: 10px; }
-.coach-icon { width: 33px; height: 33px; border-radius: 11px; display: grid; place-items: center; color: hsl(255 45% 36%); background: #e9e3ff; box-shadow: 0 0 0 6px rgba(233,227,255,.5); }
-.coach-title { font: 700 14px Manrope, sans-serif; color: hsl(245 21% 18%); }
-.coach-tag { margin: 3px 0 0; font-size: 10px; color: hsl(255 45% 53%); }
-.coach-insight { margin: 21px 0 13px; color: hsl(247 16% 32%); font-size: 14px; line-height: 1.5; letter-spacing: -.01em; }
-.coach-insight strong { color: hsl(255 45% 36%); }
-.suggestion-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 12px; border-radius: 11px; background: rgba(233,227,255,.58); border: 1px solid rgba(205,193,246,.5); }
-.suggestion-label { color: hsl(var(--muted-foreground)); font-size: 10px; }
-.suggestion-value { color: hsl(255 45% 32%); font: 700 13px Manrope, sans-serif; margin-top: 2px; }
-.coach-actions { display: flex; align-items: center; gap: 15px; margin-top: 17px; }
-.coach-details { margin: 16px 0 0; padding: 12px; border-top: 1px solid rgba(205,193,246,.55); color: hsl(247 12% 42%); font-size: 11px; line-height: 1.5; animation: rise .25s ease-out; }
 
 /* ----- Progress card ----- */
 .progress-card { padding: 22px 23px 23px; }
@@ -197,8 +173,6 @@ img { display: block; max-width: 100%; }
 .sweep-row { display: flex; align-items: center; gap: 11px; padding: 12px 0; border-bottom: 1px solid hsl(250 33% 94%); }
 .sweep-row:last-child { border-bottom: 0; }
 .source-icon { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; flex: 0 0 auto; font: 800 13px Manrope, sans-serif; }
-.source-swiggy { color: #de6748; background: #fff0ec; }
-.source-uber { color: #303035; background: #f0f0f1; }
 .source-freelance { color: #688653; background: #edf5e8; }
 .sweep-source { min-width: 0; flex: 1; }
 .sweep-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: hsl(245 21% 23%); font-size: 12px; font-weight: 700; }
@@ -226,13 +200,6 @@ img { display: block; max-width: 100%; }
 .health-link { margin-top: 20px; }
 
 /* ----- Demo bar ----- */
-.demo-bar { display: flex; justify-content: flex-end; margin-top: 24px; }
-.demo-button { border: 0; background: transparent; color: hsl(var(--muted-foreground)); display: inline-flex; align-items: center; gap: 6px; padding: 6px 0; font-size: 10px; }
-.demo-button:hover { color: hsl(255 45% 43%); }
-.demo-menu { position: absolute; right: 32px; margin-top: 29px; width: 185px; z-index: 10; padding: 8px; border: 1px solid hsl(var(--border)); border-radius: 13px; background: white; box-shadow: var(--shadow-md); }
-.demo-wrap { position: relative; }
-.demo-menu button { display: flex; align-items: center; gap: 7px; width: 100%; border: 0; background: none; text-align: left; padding: 8px; border-radius: 7px; font-size: 11px; color: hsl(var(--foreground)); }
-.demo-menu button:hover { background: hsl(var(--secondary)); }
 
 /* ----- Loading / Error / Modal / Toast ----- */
 .skeleton { position: relative; overflow: hidden; background: hsl(252 35% 94%); border-radius: 7px; }
@@ -254,9 +221,6 @@ img { display: block; max-width: 100%; }
 .modal-list { display: grid; gap: 10px; padding: 0; color: hsl(247 12% 42%); font-size: 12px; }
 .modal-list li { display: flex; align-items: start; gap: 8px; }
 .modal-list li svg { color: hsl(var(--primary)); flex: 0 0 auto; }
-
-.toast { position: fixed; right: 22px; bottom: 22px; z-index: 60; display: flex; align-items: center; gap: 9px; max-width: calc(100vw - 44px); padding: 12px 15px; border-radius: 12px; background: hsl(245 30% 22%); color: white; box-shadow: var(--shadow-lg); font-size: 12px; animation: toast-in .3s ease-out; }
-.toast svg { color: #9fe1bb; }
 
 /* ===================================================================
    SIDEBAR — Collapsible Bryn Navigation
@@ -378,17 +342,11 @@ img { display: block; max-width: 100%; }
   flex: 0 0 auto;
 }
 
-.sidebar-bottom {
-  padding: 12px;
-  border-top: 1px solid hsl(var(--border));
-}
-
 /* ----- Animations ----- */
 @keyframes rise { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes fade-out { from { opacity: 1; } to { opacity: 0; } }
 @keyframes pop { from { opacity: 0; transform: translateY(-5px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
-@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes shimmer { to { transform: translateX(100%); } }
 @keyframes sidebar-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 @keyframes sidebar-out { from { transform: translateX(0); } to { transform: translateX(-100%); } }
@@ -403,7 +361,6 @@ img { display: block; max-width: 100%; }
 @media (max-width: 1020px) {
   .layout-grid { grid-template-columns: 1fr; }
   .side-stack { grid-template-columns: 1fr 1fr; }
-  .coach-card { grid-column: span 2; }
 }
 
 @media (max-width: 760px) {
@@ -411,7 +368,6 @@ img { display: block; max-width: 100%; }
   .header-greeting { display: none; }
   .dashboard-main { padding: 27px 17px 45px; }
   .overview-grid, .side-stack, .loading-grid { grid-template-columns: 1fr; }
-  .coach-card { grid-column: auto; }
   .layout-grid { gap: 16px; }
   .overview-grid, .side-stack { gap: 16px; }
   .card-head { padding-left: 18px; padding-right: 18px; }
@@ -420,14 +376,11 @@ img { display: block; max-width: 100%; }
   .savings-body,
   .progress-card,
   .health-card,
-  .coach-card { padding-left: 18px; padding-right: 18px; }
-  .credit-explain { margin-left: 18px; margin-right: 18px; }
   .sweeps-scroll { margin-left: 18px; }
   .empty-state { margin-left: 18px; margin-right: 18px; }
   .score-layout { grid-template-columns: 125px 1fr; gap: 14px; }
   .score-ring { width: 120px; height: 120px; }
   .score-number { font-size: 27px; }
-  .demo-menu { right: 0; }
 }
 
 @media (max-width: 390px) {

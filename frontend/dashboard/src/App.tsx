@@ -1,29 +1,28 @@
-import { useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowUpRight,
-  Bell,
   Check,
   ChevronRight,
   CircleAlert,
-  CircleHelp,
   Clock3,
   CreditCard,
   Gauge,
   HandCoins,
   Info,
-  Lightbulb,
-  Menu,
-  RefreshCw,
   RotateCcw,
-  Settings2,
   ShieldCheck,
-  Sparkles,
   TrendingUp,
   Wallet,
   X,
 } from 'lucide-react';
-import { financialDataAdapter, type RecentSweep } from '@/data/financial-data';
-import { fetchCreditScore, fetchDashboard } from '@/lib/api';
+import { STASH_GOAL, WORKER_PLATFORM_PROFILE } from '@/config';
+import {
+  fetchCreditScore,
+  fetchDashboard,
+  type CreditScoreResponse,
+  type DashboardStats,
+  type RecentSweep,
+} from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 
 /* ------------------------------------------------------------------ */
@@ -31,7 +30,39 @@ import Sidebar from '@/components/Sidebar';
 /* ------------------------------------------------------------------ */
 
 function formatINR(amount: number) {
-  return `₹${amount.toLocaleString('en-IN')}`;
+  return `₹${Math.round(amount).toLocaleString('en-IN')}`;
+}
+
+function formatDate(iso: string | null) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('en-IN');
+}
+
+/** SHAP returns raw column names; the UI shows what they mean. */
+const FEATURE_LABELS: Record<string, string> = {
+  age: 'Age',
+  primary_gig_platform: 'Primary platform',
+  platform_customer_rating: 'Customer rating',
+  completed_gigs_per_week: 'Gigs completed weekly',
+  average_weekly_payout: 'Average weekly payout',
+  payout_volatility_index: 'Income volatility',
+  active_platform_hours_per_week: 'Hours worked weekly',
+  resilience_stash_balance: 'Resilience stash balance',
+};
+
+/** Sweeps recorded in the current calendar month. */
+function sweepsThisMonth(sweeps: RecentSweep[]) {
+  const now = new Date();
+  const current = sweeps.filter((sweep) => {
+    if (!sweep.created_at) return false;
+    const date = new Date(sweep.created_at);
+    return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+  });
+  return {
+    count: current.length,
+    total: current.reduce((sum, sweep) => sum + sweep.sweep_amount, 0),
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -39,26 +70,23 @@ function formatINR(amount: number) {
 /* ------------------------------------------------------------------ */
 
 function SweepRow({ sweep }: { sweep: RecentSweep }) {
-  const sourceLetter =
-    sweep.sourceType === 'swiggy' ? 'S' : sweep.sourceType === 'uber' ? 'U' : 'F';
   return (
     <div className="sweep-row" role="listitem" data-testid={`row-sweep-${sweep.id}`}>
-      <div className={`source-icon source-${sweep.sourceType}`} aria-hidden="true">
-        {sourceLetter}
+      <div className="source-icon source-freelance" aria-hidden="true">
+        <HandCoins size={15} strokeWidth={1.9} />
       </div>
       <div className="sweep-source">
         <div className="sweep-name" data-testid={`text-sweep-source-${sweep.id}`}>
-          {sweep.source}
+          {sweep.reason}
         </div>
-        <div className="sweep-date">{sweep.date}</div>
+        <div className="sweep-date">{formatDate(sweep.created_at)}</div>
       </div>
       <div style={{ textAlign: 'right' }}>
         <div className="sweep-amount" data-testid={`text-sweep-amount-${sweep.id}`}>
-          +{formatINR(sweep.amount)}
+          +{formatINR(sweep.sweep_amount)}
         </div>
         <div className="completed" data-testid={`status-sweep-${sweep.id}`}>
-          <Check size={11} strokeWidth={2.5} />
-          {sweep.status}
+          Completed
         </div>
       </div>
     </div>
@@ -66,7 +94,7 @@ function SweepRow({ sweep }: { sweep: RecentSweep }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Loading State                                                     */
+/*  Loading                                                           */
 /* ------------------------------------------------------------------ */
 
 function LoadingState() {
@@ -89,60 +117,9 @@ function LoadingState() {
 /*  Modal                                                             */
 /* ------------------------------------------------------------------ */
 
-function Modal({
-  kind,
-  onClose,
-}: {
-  kind: 'stash' | 'score' | 'coach' | 'health';
-  onClose: () => void;
-}) {
-  const content = {
-    stash: {
-      title: 'Your Stash is working quietly',
-      intro:
-        'This is money set aside for the uneven moments — a slower week, an unexpected repair, or simply a little more breathing room.',
-      highlight: '₹12,450 ready when you need it',
-      bullets: [
-        'Your Stash is separate from everyday spending.',
-        'Automatic sweeps help you build without having to remember.',
-        'You\'re 62% of the way to your ₹20,000 cushion goal.',
-      ],
-    },
-    score: {
-      title: 'A fuller picture of credit',
-      intro:
-        'Your Gig Credit Score is designed for income that does not arrive on the same day every month.',
-      highlight: '742 · Good',
-      bullets: [
-        'Savings consistency shows you can create a steady habit.',
-        'Regular income captures the rhythm of your work, not just a salary date.',
-        'On-time repayments are a strong signal of responsible credit use.',
-      ],
-    },
-    coach: {
-      title: 'Why this recommendation?',
-      intro:
-        'Bryn looks at your recent activity and suggests a move that feels achievable, not disruptive.',
-      highlight: 'Move ₹600 → Stash',
-      bullets: [
-        'It fits your recent saving rhythm.',
-        'It would take your cushion to ₹13,050.',
-        'You can review or change the suggestion before making it.',
-      ],
-    },
-    health: {
-      title: 'Your credit health, simply',
-      intro:
-        'These three signals are the building blocks behind your score. They are meant to help you understand, not judge, your financial life.',
-      highlight: 'Strong habits are already showing',
-      bullets: [
-        'High savings consistency means your automatic habit is sticking.',
-        'Excellent repayment behavior gives lenders a clear, positive signal.',
-        'Good income stability reflects a healthy rhythm across your gigs.',
-      ],
-    },
-  }[kind];
+type ModalContent = { title: string; intro: string; highlight: string; bullets: string[] };
 
+function Modal({ content, onClose }: { content: ModalContent; onClose: () => void }) {
   return (
     <div
       className="modal-scrim"
@@ -191,118 +168,94 @@ function Modal({
 /* ------------------------------------------------------------------ */
 
 function Home() {
-  const snapshot = financialDataAdapter;
+  const [dashboard, setDashboard] = useState<DashboardStats | null>(null);
+  const [score, setScore] = useState<CreditScoreResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [scoreError, setScoreError] = useState<string | null>(null);
+  const [modal, setModal] = useState<'stash' | 'score' | null>(null);
 
-  const [stash, setStash] = useState(snapshot.stash.amount);
-  const [sweeps, setSweeps] = useState<RecentSweep[]>(snapshot.recentSweeps);
-  const [credit, setCredit] = useState(snapshot.credit);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
-  const [applied, setApplied] = useState(false);
-  const [modal, setModal] = useState<'stash' | 'score' | 'coach' | 'health' | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [demoOpen, setDemoOpen] = useState(false);
-
-  // Sidebar state
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const brandRef = useRef<HTMLDivElement>(null);
 
-  const targetProgress = Math.min((stash / snapshot.stash.target) * 100, 100);
+  // Every number on this page comes from one of the two services. A failure is
+  // surfaced, never papered over with placeholder figures.
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setScoreError(null);
 
-  // Auto-dismiss toast
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 3200);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
-
-  // Pull live data from backend + ml_service where available; on any failure
-  // (service down, no demo user seeded) keep the local demo snapshot as-is —
-  // this UI is designed to look complete either way.
-  useEffect(() => {
-    fetchDashboard()
-      .then((data) => {
-        if (!data) return;
-        setStash(data.total_stash_balance);
-        setSweeps(
-          data.recent_sweeps.map((s) => ({
-            id: s.id,
-            source: s.reason,
-            sourceType: 'freelance',
-            date: s.created_at ? new Date(s.created_at).toLocaleDateString() : '',
-            amount: s.sweep_amount,
-            status: 'Completed',
-          })),
-        );
-      })
-      .catch(() => {});
-
-    fetchCreditScore({
-      age: 29,
-      primary_gig_platform: 'Ride-Hailing',
-      platform_customer_rating: 4.7,
-      completed_gigs_per_week: 62,
-      average_weekly_payout: 9200,
-      payout_volatility_index: 0.18,
-      active_platform_hours_per_week: 44,
-      resilience_stash_balance: snapshot.stash.amount,
-    })
-      .then((score) =>
-        setCredit((current) => ({
-          ...current,
-          score: Math.round(score.final_score),
-          label: score.category,
-        })),
-      )
-      .catch(() => {});
-  }, []);
-
-  const announce = (message: string) => setToast(message);
-
-  const applySuggestion = () => {
-    if (applied) {
-      announce('That suggestion is already part of your Stash.');
+    let stats: DashboardStats;
+    try {
+      stats = await fetchDashboard();
+      setDashboard(stats);
+    } catch (err) {
+      setDashboard(null);
+      setError(err instanceof Error ? err.message : String(err));
+      setLoading(false);
       return;
     }
-    setStash((current) => current + snapshot.coach.suggestionAmount);
-    setApplied(true);
-    announce('₹600 moved to your Stash. Nice, steady progress.');
-  };
 
-  const simulateLoading = () => {
-    setDemoOpen(false);
-    setError(false);
-    setLoading(true);
-    window.setTimeout(() => setLoading(false), 1200);
-  };
-
-  const restoreDemo = () => {
-    setDemoOpen(false);
-    setError(false);
+    // The scoring model needs the worker's financial position, which only the
+    // financial API knows — so it is scored against the balance we just loaded.
+    try {
+      setScore(
+        await fetchCreditScore({
+          ...WORKER_PLATFORM_PROFILE,
+          average_weekly_payout: Math.max(stats.income_30d_baseline, 1),
+          resilience_stash_balance: stats.total_stash_balance,
+        }),
+      );
+    } catch (err) {
+      setScore(null);
+      setScoreError(err instanceof Error ? err.message : String(err));
+    }
     setLoading(false);
-    setSweeps(snapshot.recentSweeps);
-    setStash(snapshot.stash.amount);
-    setApplied(false);
-    announce('Demo data restored.');
-  };
+  }, []);
 
-  const toggleSidebar = () => {
-    setSidebarOpen((prev) => !prev);
-    // Close popovers when toggling sidebar
-    setProfileOpen(false);
-    setNotificationsOpen(false);
-  };
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const stash = dashboard?.total_stash_balance ?? 0;
+  const pending = dashboard?.pending_contributions ?? 0;
+  const sweeps = dashboard?.recent_sweeps ?? [];
+  const targetProgress = Math.min((stash / STASH_GOAL) * 100, 100);
+  const month = sweepsThisMonth(sweeps);
+
+  const modalContent: ModalContent | null =
+    modal === 'stash'
+      ? {
+          title: 'Your Stash is working quietly',
+          intro:
+            'This is money set aside for the uneven moments — a slower week, an unexpected repair, or simply a little more breathing room.',
+          highlight: `${formatINR(stash)} ready when you need it`,
+          bullets: [
+            'Your Stash is separate from everyday spending.',
+            'Automatic sweeps round up debits and skim a share of above-average payouts.',
+            `${formatINR(pending)} is queued for your next sweep.`,
+            `You are ${Math.round(targetProgress)}% of the way to your ${formatINR(STASH_GOAL)} cushion goal.`,
+          ],
+        }
+      : modal === 'score' && score
+        ? {
+            title: 'A fuller picture of credit',
+            intro:
+              'Your Gig Credit Score is designed for income that does not arrive on the same day every month. It blends a transparent rule score with a model trained on gig-work patterns.',
+            highlight: `${Math.round(score.final_score)} · ${score.category}`,
+            bullets: [
+              `Rule engine: ${Math.round(score.rule_score)} out of 800.`,
+              score.ml_available
+                ? `Model: ${Math.round(score.ml_score ?? 0)} out of 800, blended at 60% weight.`
+                : 'The model is unavailable, so this score is 100% rule-based.',
+              `Confidence ${(score.confidence * 100).toFixed(0)}%, scored in ${score.latency_ms} ms.`,
+            ],
+          }
+        : null;
 
   return (
     <div className="dashboard-shell">
-      {/* ---- Sidebar ---- */}
-      <Sidebar
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        triggerRef={brandRef}
-      />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} triggerRef={brandRef} />
 
       {/* ---- Header ---- */}
       <header className="app-header">
@@ -315,11 +268,11 @@ function Home() {
             data-testid="text-brand"
             aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
             aria-expanded={sidebarOpen}
-            onClick={toggleSidebar}
+            onClick={() => setSidebarOpen((open) => !open)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                toggleSidebar();
+                setSidebarOpen((open) => !open);
               }
             }}
           >
@@ -329,80 +282,19 @@ function Home() {
             <span className="brand-word">Bryn</span>
           </div>
           <div className="header-greeting">
-            <strong>Good morning, {snapshot.user.firstName}</strong>
-            <span>Here's your financial resilience snapshot</span>
+            <strong>Your financial resilience</strong>
+            <span>Micro-savings and gig credit, from live account data</span>
           </div>
           <div className="header-actions">
             <button
               className="icon-button"
               type="button"
-              aria-label="View notifications"
-              data-testid="button-notifications"
-              onClick={() => {
-                setNotificationsOpen((open) => !open);
-                setProfileOpen(false);
-              }}
+              aria-label="Refresh snapshot"
+              data-testid="button-refresh"
+              onClick={() => void load()}
             >
-              <Bell size={18} strokeWidth={1.8} />
+              <RotateCcw size={18} strokeWidth={1.8} />
             </button>
-            <button
-              className="avatar-button"
-              type="button"
-              aria-label="Open account menu"
-              data-testid="button-account-menu"
-              onClick={() => {
-                setProfileOpen((open) => !open);
-                setNotificationsOpen(false);
-              }}
-            >
-              {snapshot.user.initials}
-            </button>
-            {notificationsOpen && (
-              <div className="header-popover" role="status" data-testid="panel-notifications">
-                <div className="popover-name">
-                  You're all caught up
-                  <small>No new alerts right now.</small>
-                </div>
-                <button
-                  className="popover-action"
-                  type="button"
-                  onClick={() => {
-                    setNotificationsOpen(false);
-                    announce('We\'ll keep an eye on your next sweep.');
-                  }}
-                >
-                  Keep me posted
-                </button>
-              </div>
-            )}
-            {profileOpen && (
-              <div className="header-popover" role="menu" data-testid="panel-account">
-                <div className="popover-name">
-                  Mira Shah
-                  <small>Personal resilience space</small>
-                </div>
-                <button
-                  className="popover-action"
-                  type="button"
-                  onClick={() => {
-                    setProfileOpen(false);
-                    announce('Preferences are ready for your next visit.');
-                  }}
-                >
-                  <Settings2 size={13} /> Preferences
-                </button>
-                <button
-                  className="popover-action"
-                  type="button"
-                  onClick={() => {
-                    setProfileOpen(false);
-                    announce('Your account is secure.');
-                  }}
-                >
-                  <ShieldCheck size={13} /> Account security
-                </button>
-              </div>
-            )}
           </div>
         </div>
       </header>
@@ -422,26 +314,20 @@ function Home() {
         ) : error ? (
           <div className="error-state" role="alert" data-testid="state-error">
             <CircleAlert size={27} strokeWidth={1.7} />
-            <h2>We couldn't refresh your snapshot</h2>
-            <p>
-              Your saved picture is safe. Try again when you&apos;re ready and we&apos;ll bring the
-              latest activity back.
-            </p>
+            <h2>We couldn&apos;t load your savings</h2>
+            <p data-testid="text-error-detail">{error}</p>
             <button
               className="primary-button"
               type="button"
               data-testid="button-retry"
-              onClick={() => {
-                setError(false);
-                announce('Snapshot refreshed.');
-              }}
+              onClick={() => void load()}
             >
               <RotateCcw size={14} /> Try again
             </button>
           </div>
         ) : (
           <div className="layout-grid">
-            {/* ---- Financial overview section ---- */}
+            {/* ---- Financial overview ---- */}
             <section aria-labelledby="overview-heading">
               <div className="card-head" style={{ paddingLeft: 0, paddingTop: 0, paddingBottom: 13 }}>
                 <div>
@@ -467,11 +353,11 @@ function Home() {
                     <div className="money-value" data-testid="text-stash-amount">
                       {formatINR(stash)}
                     </div>
-                    <div className="money-delta">
-                      <TrendingUp size={13} /> +{formatINR(snapshot.stash.monthlyChange)} this month
+                    <div className="money-delta" data-testid="text-stash-pending">
+                      <TrendingUp size={13} /> {formatINR(pending)} queued for your next sweep
                     </div>
                     <p className="stash-note">
-                      You're building a buffer for the days work gets a little quieter.
+                      You are building a buffer for the days work gets a little quieter.
                     </p>
                     <div className="stash-footer">
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -479,13 +365,10 @@ function Home() {
                           className="progress-track"
                           aria-label={`${Math.round(targetProgress)}% of your Stash goal`}
                         >
-                          <div
-                            className="stash-progress"
-                            style={{ width: `${targetProgress}%` }}
-                          />
+                          <div className="stash-progress" style={{ width: `${targetProgress}%` }} />
                         </div>
                         <div className="progress-caption" data-testid="text-stash-progress">
-                          {Math.round(targetProgress)}% of ₹20,000 buffer goal
+                          {Math.round(targetProgress)}% of {formatINR(STASH_GOAL)} buffer goal
                         </div>
                       </div>
                       <button
@@ -509,47 +392,55 @@ function Home() {
                     </div>
                     <CreditCard size={18} color="#8B6FE8" strokeWidth={1.8} aria-hidden="true" />
                   </div>
-                  <div className="score-layout">
-                    <div
-                      className="score-ring"
-                      aria-label={`Credit score ${credit.score} out of 800`}
-                    >
-                      <div className="score-inside">
-                        <div className="score-number" data-testid="text-credit-score">
-                          {credit.score}
+                  {scoreError ? (
+                    <div className="error-state" role="alert" data-testid="state-score-error">
+                      <CircleAlert size={22} strokeWidth={1.7} />
+                      <p data-testid="text-score-error-detail">{scoreError}</p>
+                    </div>
+                  ) : score ? (
+                    <div className="score-layout">
+                      <div
+                        className="score-ring"
+                        aria-label={`Credit score ${Math.round(score.final_score)} out of 800`}
+                      >
+                        <div className="score-inside">
+                          <div className="score-number" data-testid="text-credit-score">
+                            {Math.round(score.final_score)}
+                          </div>
+                          <div className="score-outof">out of 800</div>
+                          <div className="score-good">{score.category}</div>
                         </div>
-                        <div className="score-outof">out of 800</div>
-                        <div className="score-good">{credit.label}</div>
+                      </div>
+                      <div className="score-factors">
+                        {score.explanation.length ? (
+                          score.explanation.map((factor) => (
+                            <div className="factor" key={factor.feature}>
+                              <Check size={14} className="factor-icon" strokeWidth={2.5} />
+                              {FEATURE_LABELS[factor.feature] ?? factor.feature}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="factor">
+                            <Check size={14} className="factor-icon" strokeWidth={2.5} />
+                            Scored on transparent rules
+                          </div>
+                        )}
+                        <button
+                          className="info-link"
+                          type="button"
+                          data-testid="button-score-explanation"
+                          onClick={() => setModal('score')}
+                        >
+                          <Info size={13} /> How this works
+                        </button>
                       </div>
                     </div>
-                    <div className="score-factors">
-                      {snapshot.credit.factors.map((factor) => (
-                        <div className="factor" key={factor}>
-                          <Check size={14} className="factor-icon" strokeWidth={2.5} /> {factor}
-                        </div>
-                      ))}
-                      <button
-                        className="info-link"
-                        type="button"
-                        data-testid="button-score-explanation"
-                        onClick={() => setModal('score')}
-                      >
-                        <Info size={13} /> How this works
-                      </button>
-                    </div>
-                  </div>
-                  {modal === 'score' && (
-                    <div className="credit-explain">
-                      Your Gig Credit Score looks beyond a single repayment history. It recognizes the
-                      steady actions that help you stay ready: putting money aside, keeping income
-                      flowing, and paying on time.
-                    </div>
-                  )}
+                  ) : null}
                 </article>
               </div>
             </section>
 
-            {/* ---- Savings activity + AI Coach ---- */}
+            {/* ---- Savings activity + resilience progress ---- */}
             <div className="side-stack">
               <article className="card savings-card stagger-3" data-testid="card-savings-activity">
                 <div className="card-head">
@@ -561,89 +452,31 @@ function Home() {
                 </div>
                 <div className="savings-body">
                   <div className="savings-amount" data-testid="text-saved-amount">
-                    ₹850
+                    {formatINR(month.total)}
                     <span>
-                      saved this month · {snapshot.savings.automaticSweeps} automatic sweeps
+                      saved this month · {month.count} automatic{' '}
+                      {month.count === 1 ? 'sweep' : 'sweeps'}
                     </span>
                   </div>
                   <div>
-                    <div className="sweep-bars" aria-label="Savings activity trend">
-                      <i className="sweep-bar" />
-                      <i className="sweep-bar" />
-                      <i className="sweep-bar" />
-                      <i className="sweep-bar" />
-                      <i className="sweep-bar" />
-                      <i className="sweep-bar" />
+                    <div className="sweep-bars" aria-label="Recent sweep sizes">
+                      {sweeps.slice(0, 6).map((sweep) => (
+                        <i className="sweep-bar" key={sweep.id} />
+                      ))}
                     </div>
-                    <div className="sweep-label">steady rhythm</div>
+                    <div className="sweep-label">
+                      30-day income baseline {formatINR(dashboard?.income_30d_baseline ?? 0)}
+                    </div>
                   </div>
                 </div>
               </article>
 
-              <article className="card coach-card stagger-4" data-testid="card-financial-coach">
-                <div className="coach-content">
-                  <div className="coach-heading">
-                    <div className="coach-icon">
-                      <Sparkles size={17} strokeWidth={1.8} />
-                    </div>
-                    <div>
-                      <div className="coach-title">AI Financial Coach</div>
-                      <div className="coach-tag">A thoughtful nudge, just for you</div>
-                    </div>
-                  </div>
-                  <p className="coach-insight">{snapshot.coach.insight}</p>
-                  <div className="suggestion-row">
-                    <div>
-                      <div className="suggestion-label">Recommended action</div>
-                      <div className="suggestion-value">
-                        Move ₹600 <span aria-hidden="true">→</span> Stash
-                      </div>
-                    </div>
-                    <Lightbulb size={17} color="#8B6FE8" strokeWidth={1.8} />
-                  </div>
-                  <div className="coach-actions">
-                    <button
-                      className="primary-button"
-                      type="button"
-                      data-testid="button-apply-suggestion"
-                      onClick={applySuggestion}
-                    >
-                      {applied ? (
-                        <>
-                          <Check size={14} /> Applied
-                        </>
-                      ) : (
-                        'Apply suggestion'
-                      )}
-                    </button>
-                    <button
-                      className="micro-link"
-                      type="button"
-                      data-testid="button-view-coach-details"
-                      onClick={() => setModal('coach')}
-                    >
-                      View details <ChevronRight size={13} />
-                    </button>
-                  </div>
-                  {modal === 'coach' && (
-                    <div className="coach-details">
-                      This suggestion keeps your buffer moving without asking for a big lifestyle
-                      change. It's based on your recent sweep rhythm and the ₹20,000 cushion you're
-                      building toward.
-                    </div>
-                  )}
-                </div>
-              </article>
-            </div>
-
-            {/* ---- Resilience progress + Credit health ---- */}
-            <div className="side-stack">
               <article className="card progress-card stagger-2" data-testid="card-resilience-progress">
                 <div className="progress-top">
                   <div>
                     <h2 className="card-title">Resilience progress</h2>
                     <div className="progress-amount" data-testid="text-resilience-amount">
-                      {formatINR(stash)} <span>/ ₹20,000</span>
+                      {formatINR(stash)} <span>/ {formatINR(STASH_GOAL)}</span>
                     </div>
                   </div>
                   <div className="percent" data-testid="text-resilience-percent">
@@ -659,40 +492,61 @@ function Home() {
                 <div className="progress-message">
                   <ShieldCheck size={14} />
                   <span>
-                    At this pace, you're creating a cushion that can carry you through a slower week.
+                    At this pace, you are creating a cushion that can carry you through a slower
+                    week.
                   </span>
                 </div>
               </article>
+            </div>
 
-              <article className="card health-card stagger-3" data-testid="card-credit-health">
+            {/* ---- Scoring transparency ---- */}
+            {score && (
+              <article className="card health-card stagger-3" data-testid="card-score-breakdown">
                 <div className="card-head" style={{ padding: 0 }}>
                   <div>
-                    <h2 className="card-title">Credit health</h2>
-                    <p className="card-kicker">The habits behind your score</p>
+                    <h2 className="card-title">How your score was built</h2>
+                    <p className="card-kicker">
+                      {score.ml_available ? 'Rules blended with the model' : 'Rules only right now'}
+                    </p>
                   </div>
-                  <CircleHelp size={18} color="#8B6FE8" strokeWidth={1.8} aria-hidden="true" />
+                  <Gauge size={18} color="#8B6FE8" strokeWidth={1.8} aria-hidden="true" />
                 </div>
                 <div className="health-list">
-                  {snapshot.creditHealth.map((factor) => (
-                    <div className="health-factor" key={factor.label}>
-                      <span>{factor.label}</span>
-                      <span className={`health-value status-${factor.tone}`}>
-                        <i className="status-dot" />
-                        {factor.value}
-                      </span>
-                    </div>
-                  ))}
+                  <div className="health-factor">
+                    <span>Rule engine score</span>
+                    <span className="health-value status-good" data-testid="text-rule-score">
+                      <i className="status-dot" />
+                      {Math.round(score.rule_score)}
+                    </span>
+                  </div>
+                  <div className="health-factor">
+                    <span>Model score</span>
+                    <span
+                      className={`health-value status-${score.ml_available ? 'excellent' : 'good'}`}
+                      data-testid="text-ml-score"
+                    >
+                      <i className="status-dot" />
+                      {score.ml_available ? Math.round(score.ml_score ?? 0) : 'Unavailable'}
+                    </span>
+                  </div>
+                  <div className="health-factor">
+                    <span>Confidence</span>
+                    <span className="health-value status-high" data-testid="text-score-confidence">
+                      <i className="status-dot" />
+                      {(score.confidence * 100).toFixed(0)}%
+                    </span>
+                  </div>
                 </div>
                 <button
                   className="info-link health-link"
                   type="button"
                   data-testid="button-learn-more-health"
-                  onClick={() => setModal('health')}
+                  onClick={() => setModal('score')}
                 >
                   Learn more <ChevronRight size={13} />
                 </button>
               </article>
-            </div>
+            )}
 
             {/* ---- Recent sweeps ---- */}
             <article className="card sweeps-card stagger-5" data-testid="card-recent-sweeps">
@@ -713,71 +567,18 @@ function Home() {
                 <div className="empty-state" data-testid="state-empty-sweeps">
                   <HandCoins size={22} />
                   <strong>Your next sweep will show up here</strong>
-                  <span>Connect a gig payment and we'll help you keep the habit going.</span>
+                  <span>Connect a gig payment and we will help you keep the habit going.</span>
                 </div>
               )}
             </article>
           </div>
         )}
-
-        {/* ---- Demo bar ---- */}
-        <div className="demo-wrap demo-bar">
-          <button
-            className="demo-button"
-            type="button"
-            data-testid="button-demo-menu"
-            onClick={() => setDemoOpen((open) => !open)}
-          >
-            <Menu size={13} /> Demo states
-          </button>
-          {demoOpen && (
-            <div className="demo-menu" role="menu" data-testid="panel-demo-menu">
-              <button type="button" onClick={simulateLoading}>
-                <RefreshCw size={12} /> Show loading state
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDemoOpen(false);
-                  setError(true);
-                }}
-              >
-                <CircleAlert size={12} /> Show recoverable error
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDemoOpen(false);
-                  setSweeps([]);
-                  announce('Recent sweeps cleared for the empty state demo.');
-                }}
-              >
-                <X size={12} /> Show empty sweeps
-              </button>
-              <button type="button" onClick={restoreDemo}>
-                <RotateCcw size={12} /> Restore demo data
-              </button>
-            </div>
-          )}
-        </div>
       </main>
 
-      {/* ---- Modal ---- */}
-      {modal && <Modal kind={modal} onClose={() => setModal(null)} />}
-
-      {/* ---- Toast ---- */}
-      {toast && (
-        <div className="toast" role="status" data-testid="toast-feedback">
-          <Check size={15} /> {toast}
-        </div>
-      )}
+      {modalContent && <Modal content={modalContent} onClose={() => setModal(null)} />}
     </div>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/*  App                                                               */
-/* ------------------------------------------------------------------ */
 
 export default function App() {
   return <Home />;

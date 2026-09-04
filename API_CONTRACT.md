@@ -9,7 +9,8 @@ This document provides the integration contract for connecting Frontend and Mobi
 * **Base URL (Local Development):** `http://localhost:8000`
 * **Interactive API Documentation (Swagger):** `http://localhost:8000/docs`
 * **Alternative API Documentation (ReDoc):** `http://localhost:8000/redoc`
-* **Authentication:** No client API keys or authorization headers required for hackathon MVP endpoints.
+* **Authentication:** No client API keys or authorization headers required on the `/api/*` endpoints.
+  The `/webhooks/*` endpoints are the exception: they require an HMAC signature or shared secret (see 3.7).
 * **CORS Status:** **Enabled** (`allow_origins=["*"]`, all methods and headers allowed). Frontend web apps can call the API directly without CORS proxy issues.
 
 ---
@@ -24,6 +25,8 @@ This document provides the integration contract for connecting Frontend and Mobi
 | **Fetch Sweeps** | **YES** | `GET /api/sweeps` | Query authorized/executed savings sweeps |
 | **Authorize/Create Sweep** | **YES** | `POST /api/sweeps` | Insert an authorized sweep record |
 | **Fetch User Dashboard** | **YES** | `GET /api/users/{user_id}/dashboard` | Total stash balance, 30d baseline income, recent sweeps |
+| **Ingest Transaction Webhook** | **YES** | `POST /webhooks/transaction` | Authenticated bank/platform event: ingest, accumulate, sweep if authorized |
+| **Authorize Pending Sweep** | **YES** | `POST /webhooks/sweep` | Sweep whatever contributions have accumulated so far |
 | **Update Transaction** | **NO** | *N/A* | *Currently not implemented* |
 | **Update Sweep** | **NO** | *N/A* | *Currently not implemented* |
 
@@ -88,7 +91,7 @@ Fetches a list of historical bank transactions and payouts.
 ---
 
 ### 3.3 `POST /api/transactions`
-Ingests a bank transaction (debit or platform payout), runs it through the deterministic `SavingsEngine`, and returns the calculation decision.
+Ingests a bank transaction (debit or platform payout), replays the user's unswept ledger tail through the deterministic savings rules, and returns the resulting decision.
 
 * **Method:** `POST`
 * **URL:** `/api/transactions`
@@ -105,11 +108,21 @@ Ingests a bank transaction (debit or platform payout), runs it through the deter
 }
 ```
 * **Success Response (`201 Created`):**
+
+  `sweep_decision` reflects **all** contributions accumulated since the user's
+  last sweep, not just this transaction. A single round-up can never reach the
+  ₹100 threshold on its own, so the decision is only meaningful across the
+  accumulated backlog. This endpoint records the transaction and reports the
+  decision; it does not execute the sweep — use `POST /webhooks/transaction` for
+  ingest-and-sweep in one atomic step.
+
 ```json
 {
   "transaction_id": "5992405a-c7b8-4c35-be43-e427b11cd071",
   "amount": 132.0,
   "transaction_type": "debit",
+  "pending_roundups": 18.0,
+  "pending_surplus": 0.0,
   "sweep_decision": {
     "amount": 18.0,
     "eligible": false,
@@ -191,6 +204,7 @@ Aggregates user savings summary for instant mobile/frontend dashboard rendering.
   "user_id": "c666bc75-751c-4e4b-866b-af5b0393d131",
   "total_stash_balance": 3.0,
   "income_30d_baseline": 0.0,
+  "pending_contributions": 18.0,
   "recent_sweeps": [
     {
       "id": "518450a1-3e3b-4063-a56f-b5152a5ed2e5",
@@ -202,6 +216,99 @@ Aggregates user savings summary for instant mobile/frontend dashboard rendering.
   ]
 }
 ```
+
+---
+
+### 3.7 `POST /webhooks/transaction`
+Ingests a bank debit or gig-platform payout, accumulates its savings
+contribution, and executes a sweep in the same database transaction when the
+accumulated total clears the threshold and sits under the mandate cap.
+
+* **Method:** `POST`
+* **URL:** `/webhooks/transaction`
+* **Authentication (required):** one of
+  * `X-Webhook-Signature`: hex HMAC-SHA256 of the **raw request body**, keyed on `WEBHOOK_SECRET`, or
+  * `X-Webhook-Secret`: the `WEBHOOK_SECRET` value verbatim.
+
+  Both are compared in constant time. If `WEBHOOK_SECRET` is unset the endpoint
+  rejects every caller — it fails shut.
+* **Request Body:**
+```json
+{
+  "userId": "c666bc75-751c-4e4b-866b-af5b0393d131",
+  "type": "debit",
+  "amount": 132.0,
+  "source": "Swiggy",
+  "timestamp": "2026-09-03T10:00:00Z",
+  "transactionId": "optional-uuid"
+}
+```
+  `type` is `"debit"` or `"payout"` (the external vocabulary; it maps onto the
+  ledger's `debit` / `platform_payout`). Omitting `transactionId` derives a
+  deterministic UUID from `userId|source|timestamp|amount`, which is what makes
+  redelivery idempotent.
+* **Success Response (`200 OK`):**
+```json
+{
+  "status": "success",
+  "transaction_id": "5992405a-c7b8-4c35-be43-e427b11cd071",
+  "user_id": "c666bc75-751c-4e4b-866b-af5b0393d131",
+  "amount": 132.0,
+  "transaction_type": "debit",
+  "swept": true,
+  "swept_amount": 118.0,
+  "pending_after": 0.0,
+  "new_balance": 1180.0,
+  "was_capped": false,
+  "reason": "UPI AutoPay sweep authorized"
+}
+```
+* **Replayed Delivery (`200 OK`):**
+```json
+{
+  "status": "already_processed",
+  "transaction_id": "5992405a-c7b8-4c35-be43-e427b11cd071",
+  "swept": false,
+  "swept_amount": 0.0,
+  "new_balance": 1180.0,
+  "reason": "Transaction already processed - skipped (idempotent)."
+}
+```
+* **Validation Error (`400 Bad Request`):** `{"detail": "Missing required fields: source, timestamp"}`
+* **Auth Error (`401 Unauthorized`):** `{"detail": "Invalid or missing webhook signature."}`
+
+---
+
+### 3.8 `POST /webhooks/sweep`
+Authorizes a sweep of everything accumulated so far. Ingests nothing.
+
+* **Method:** `POST`
+* **URL:** `/webhooks/sweep`
+* **Authentication:** identical to `/webhooks/transaction`.
+* **Request Body:**
+```json
+{
+  "user_id": "c666bc75-751c-4e4b-866b-af5b0393d131",
+  "threshold": 100.0,
+  "mandate_limit": 1000.0
+}
+```
+* **Success Response (`200 OK`):**
+```json
+{
+  "status": "success",
+  "sweep_id": "f339fee2-7deb-45e8-b1cb-5cf456fefc12",
+  "swept": true,
+  "swept_amount": 147.0,
+  "pending_after": 0.0,
+  "new_balance": 1327.0,
+  "was_capped": false,
+  "reason": "UPI AutoPay sweep authorized"
+}
+```
+* **Not Eligible (`200 OK`):** same shape with `"status": "not_eligible"`,
+  `"swept": false`, and the blocking `reason`
+  (`"minimum threshold not reached"` or `"mandate limit exceeded"`).
 
 ---
 

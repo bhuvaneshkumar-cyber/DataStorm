@@ -36,6 +36,20 @@ FEATURE_ORDER = [
     "resilience_stash_balance",
 ]
 
+MAX_SCORE = 800.0
+
+# Share of the synthetic population labelled creditworthy. Fixing this keeps the
+# classes balanced enough for a stratified split however the features are drawn.
+GOOD_CLASS_SHARE = 0.45
+
+# Label noise, expressed as a fraction of the latent score's own spread rather
+# than as an absolute sigma. Creditworthiness is not fully determined by eight
+# features, so some irreducible error belongs in the labels - but pinning it to
+# a fixed sigma made the difficulty an accident of how the features happened to
+# be scaled. At 0.25 the Bayes-optimal accuracy is ~0.92, so a model scoring
+# just under that is at the ceiling, not underfitting.
+LABEL_NOISE_RATIO = 0.25
+
 
 class CreditModelPipeline:
     """Encode -> predict -> explain. Never raises: callers fall back to rules."""
@@ -44,23 +58,75 @@ class CreditModelPipeline:
         self.random_state = random_state
         self.model: RandomForestClassifier | None = None
         self.explainer: shap.TreeExplainer | None = None
+        # Held-out accuracy from the last training run; None if training failed.
+        self.holdout_accuracy: float | None = None
         self._train(n_samples)
 
     # ---------------------------------------------------------------- training
 
     def _synthetic_training_set(self, n: int) -> tuple[pd.DataFrame, np.ndarray]:
-        """Generate a labelled sample whose signal mirrors the rule engine."""
+        """Generate a labelled sample whose signal mirrors the rule engine.
+
+        The features are drawn *correlated*, not independently. Real gig-work
+        data is heavily structured - hours drive payout, payout drives how much
+        can be saved, ratings cluster near the top because low-rated workers get
+        deactivated - and a model trained on independent uniform draws learns a
+        feature space that no real applicant lives in. It scores well in testing
+        and then attributes nonsense in production, because it has seen
+        combinations (90 hours a week for a 1200 rupee payout, a 3.1 rating that
+        was never deactivated) that cannot occur.
+        """
         rng = np.random.default_rng(self.random_state)
+
+        # Right-skewed: gig work skews young, with a long tail of older workers.
+        age = np.clip(18 + rng.gamma(2.2, 6.0, n), 18, 65).astype(int)
+
+        # Platform mix roughly reflects Indian metro gig work.
+        platform = rng.choice(len(PLATFORMS), n, p=[0.34, 0.38, 0.18, 0.10])
+        is_freelance = platform == PLATFORMS.index("Freelance")
+
+        # Hours are the root driver; most work near-full-time, some part-time.
+        hours = np.clip(rng.normal(42, 14, n), 5, 90)
+
+        # Earnings per hour: freelance pays better per hour and spreads wider.
+        hourly = np.where(
+            is_freelance,
+            rng.lognormal(np.log(320), 0.45, n),
+            rng.lognormal(np.log(185), 0.30, n),
+        )
+        payout = np.clip(hours * hourly, 800, 30000)
+
+        # Gig count follows hours - except freelancers bill few, large jobs.
+        gigs = np.where(
+            is_freelance,
+            rng.integers(1, 8, n),
+            np.clip(hours * rng.normal(1.9, 0.45, n), 0, 120),
+        ).astype(int)
+
+        # Ratings pile up near 5.0: sub-4.2 workers are deactivated, so the tail
+        # is thin. Uniform 1-5 would hand the model variance that does not exist.
+        rating = np.round(np.clip(5.0 - rng.beta(2.0, 7.5, n) * 3.0, 1.0, 5.0), 2)
+
+        # Volatility is mostly low-to-moderate; freelance income swings hardest.
+        volatility = np.round(
+            np.clip(rng.beta(2.2, 5.0, n) + np.where(is_freelance, 0.12, 0.0), 0.0, 1.0), 3
+        )
+
+        # Savings are a habit multiplied by capacity, not an independent draw:
+        # a worker cannot stash what they never earned.
+        savings_habit = rng.beta(1.8, 3.2, n)
+        stash = np.round(np.clip(savings_habit * payout * rng.uniform(0, 11, n), 0, 150000), 2)
+
         df = pd.DataFrame(
             {
-                "age": rng.integers(18, 66, n),
-                "primary_gig_platform": rng.integers(0, len(PLATFORMS), n),
-                "platform_customer_rating": np.round(rng.uniform(1.0, 5.0, n), 2),
-                "completed_gigs_per_week": rng.integers(0, 120, n),
-                "average_weekly_payout": np.round(rng.uniform(1000, 25000, n), 2),
-                "payout_volatility_index": np.round(rng.uniform(0.0, 1.0, n), 3),
-                "active_platform_hours_per_week": rng.integers(5, 90, n),
-                "resilience_stash_balance": np.round(rng.uniform(0, 80000, n), 2),
+                "age": age,
+                "primary_gig_platform": platform,
+                "platform_customer_rating": rating,
+                "completed_gigs_per_week": gigs,
+                "average_weekly_payout": np.round(payout, 2),
+                "payout_volatility_index": volatility,
+                "active_platform_hours_per_week": hours.astype(int),
+                "resilience_stash_balance": stash,
             }
         )[FEATURE_ORDER]
 
@@ -73,8 +139,13 @@ class CreditModelPipeline:
             + 0.12 * np.clip(df["average_weekly_payout"] / 20000.0, 0, 1)
             + 0.08 * np.clip(df["completed_gigs_per_week"] / 60.0, 0, 1)
         )
-        noise = rng.normal(0, 0.06, n)
-        labels = ((latent + noise) > 0.55).astype(int)
+        noise = rng.normal(0, LABEL_NOISE_RATIO * float(latent.std()), n)
+
+        # Cut at a quantile rather than a fixed 0.55. With correlated features
+        # the latent distribution shifts, and a hard cut can leave one class
+        # nearly empty - which would break the stratified split downstream.
+        threshold = float(np.quantile(latent, 1.0 - GOOD_CLASS_SHARE))
+        labels = ((latent + noise) > threshold).astype(int)
         return df, labels
 
     def _train(self, n_samples: int) -> None:
@@ -93,16 +164,18 @@ class CreditModelPipeline:
                 n_jobs=-1,
             ).fit(X_train, y_train)
             self.explainer = shap.TreeExplainer(self.model)
+            self.holdout_accuracy = round(float(self.model.score(X_test, y_test)), 4)
             logger.info(
                 "Model trained on %d synthetic rows (train accuracy %.3f, held-out accuracy %.3f)",
                 len(X_train),
                 self.model.score(X_train, y_train),
-                self.model.score(X_test, y_test),
+                self.holdout_accuracy,
             )
         except Exception:
             logger.exception("Model training failed; service will run rules-only")
             self.model = None
             self.explainer = None
+            self.holdout_accuracy = None
 
     @property
     def is_ready(self) -> bool:

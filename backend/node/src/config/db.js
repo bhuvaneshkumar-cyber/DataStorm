@@ -1,15 +1,11 @@
 'use strict';
-/**
- * config/db.js – Mongoose connection helper.
- */
-
-const mongoose = require('mongoose');
-
-const config = require('./index');
+const { requireSupabase } = require('./supabase');
 
 async function connectDB() {
-  mongoose.set('strictQuery', true);
-  return mongoose.connect(config.mongoUri);
+  const client = requireSupabase();
+  const { error } = await client.from('node_transactions').select('id').limit(1);
+  if (error) throw error;
+  return client;
 }
 
 module.exports = { connectDB };

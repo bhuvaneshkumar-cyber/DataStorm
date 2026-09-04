@@ -8,3 +8,6 @@ node_modules/
 .venv_ml/
 frontend/dashboard/dist/
 DataStorm-test-branch/
+
+# Separate Replit project with its own .git history; not part of this repo.
+Resilience-Dashboard-1/

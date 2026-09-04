@@ -2,9 +2,8 @@
 /**
  * server.js – HTTP server entry point.
  *
- * Connects to MongoDB, then starts the Express app. If Mongo is unreachable,
- * the server still starts (so /health stays up for orchestration probes) but
- * logs a warning, since every webhook route will fail without a DB.
+ * Connects to Supabase, then starts the Express app. If Supabase is unavailable,
+ * the server still starts so /health remains available.
  */
 
 const app = require('./app');
@@ -14,10 +13,10 @@ const { connectDB } = require('./config/db');
 async function start() {
   try {
     await connectDB();
-    console.log('[GigSave] Connected to MongoDB');
+    console.log('[GigSave] Connected to Supabase');
   } catch (err) {
     console.error(
-      '[GigSave] MongoDB connection failed; webhook routes will error until it is reachable:',
+      '[GigSave] Supabase connection failed; webhook routes will error until it is reachable:',
       err.message
     );
   }

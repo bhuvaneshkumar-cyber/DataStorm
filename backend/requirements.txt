@@ -1,14 +1,18 @@
-# Pinned for reproducible Docker builds (python:3.11-slim).
+# Pinned for Python 3.11 (see the root Dockerfile) so the image is reproducible.
+# fastapi / uvicorn / pydantic are held at the same versions as
+# ml_service/requirements.txt: the two services are separate images, but keeping
+# the shared stack identical means one venv can run both suites without a
+# resolver conflict.
 fastapi==0.115.6
-uvicorn==0.34.0
+uvicorn[standard]==0.34.0
 pydantic==2.10.4
-# EmailStr in schemas.py needs the validator; without it the app fails at import.
-email-validator==2.2.0
+
+# Supabase PostgreSQL access. SQLAlchemy 2.0.x is what database.py's
+# declarative_base / sessionmaker usage targets; psycopg2-binary ships a wheel so
+# the image needs no local libpq build.
 sqlalchemy==2.0.36
 psycopg2-binary==2.9.10
 python-dotenv==1.0.1
-# JWT signing and verification (security.py).
-pyjwt==2.10.1
-# Server-side calls to the scoring service (scoring_client.py). Also what
-# fastapi.testclient imports, so it covers test_api.py too.
-httpx==0.28.1
+
+# Test-only, pinned so one `pip install -r` gives a runnable suite.
+pytest==8.3.4

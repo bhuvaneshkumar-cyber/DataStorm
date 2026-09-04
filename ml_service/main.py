@@ -70,8 +70,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Hackathon MVP: wide open, same as backend/main.py. The frontend calls this
-# service directly (VITE_ML_URL), so it needs its own CORS, not just the backend's.
+# Hackathon MVP: wide open, same as backend/main.py. Frontend calls this
+# service directly (VITE_ML_API_URL), so it needs its own CORS, not just the backend's.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -81,9 +81,18 @@ app.add_middleware(
 )
 
 
-# --------------------------------------------------------------------------- #
-# Scoring
-# --------------------------------------------------------------------------- #
+@app.get("/health")
+def health() -> dict:
+    """Liveness, plus whether the ML path is available (rules always are)."""
+    ready = pipeline is not None and pipeline.is_ready
+    return {
+        "status": "ok",
+        "ml_model_loaded": ready,
+        "mode": "hybrid" if ready else "rules_only",
+        # Held-out accuracy from startup training - surfaced so a demo can show
+        # the model is actually learning, not just responding.
+        "holdout_accuracy": pipeline.holdout_accuracy if pipeline else None,
+    }
 
 
 def _score(applicant: CreditScoreRequest) -> CreditScoreResponse:

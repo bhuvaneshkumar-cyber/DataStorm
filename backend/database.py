@@ -21,28 +21,6 @@ logger = logging.getLogger(__name__)
 CURRENT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = CURRENT_DIR.parent
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable is not set. Check your .env configuration.")
-
-# SQLAlchemy 2.0+ requires postgresql:// instead of postgres://
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-# Configure SQLAlchemy Engine with pooling for Supabase connection pooler.
-# Supabase requires TLS for database connections.
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,       # Automatically checks if connection is alive before using
-    pool_recycle=300,         # Recycle connections every 5 minutes
-    pool_size=10,             # Keep 10 persistent connections in pool
-    max_overflow=20,          # Allow up to 20 temporary overflow connections
-    connect_args={"connect_timeout": 10, "sslmode": "require"},
-)
-
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 

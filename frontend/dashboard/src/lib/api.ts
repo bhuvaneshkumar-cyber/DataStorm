@@ -97,9 +97,16 @@ export const money = {
       fallback: 'Could not save that entry',
     }),
 
+  // Backend route: GET /api/expenses/summary?window_days=N
   expenseSummary: (windowDays = 90) =>
     backend<ExpenseSummary>(`/api/expenses/summary?window_days=${windowDays}`, {
       fallback: 'Could not load your cash flow',
+    }),
+
+  // Sweeps sit at /api/sweeps, not under /api/transactions
+  listSweeps: (limit = 50) =>
+    backend<Sweep[]>(`/api/sweeps?limit=${limit}`, {
+      fallback: 'Could not load your stash sweeps',
     }),
 
   authorizeSweep: (sweepAmount: number, reason?: string) =>
@@ -215,6 +222,7 @@ export const financials = {
 /* ------------------------------------------------------------------ */
 
 export const insurance = {
+  // Backend route: GET /api/insurance/recommendations
   recommendations: () =>
     backend<InsuranceResponse>('/api/insurance/recommendations', {
       fallback: 'Could not build an insurance recommendation',
@@ -227,8 +235,10 @@ export const loans = {
       fallback: 'Could not check your eligibility',
     }),
 
+  // GET /api/loans — worker's own applications
   mine: () => backend<LoanApplication[]>('/api/loans', { fallback: 'Could not load your applications' }),
 
+  // POST /api/loans — submit a new application
   apply: (payload: { amount: number; tenor_months: number; purpose?: string }) =>
     backend<LoanApplication>('/api/loans', {
       method: 'POST',
@@ -236,11 +246,13 @@ export const loans = {
       fallback: 'Could not submit your application',
     }),
 
+  // GET /api/loans/queue — lender review queue
   queue: (status?: LoanStatus) =>
     backend<LoanApplication[]>(`/api/loans/queue${status ? `?status=${status}` : ''}`, {
       fallback: 'Could not load the application queue',
     }),
 
+  // PATCH /api/loans/{id} — lender decision
   decide: (id: string, status: 'approved' | 'rejected', lenderNote?: string) =>
     backend<LoanApplication>(`/api/loans/${id}`, {
       method: 'PATCH',
@@ -262,6 +274,7 @@ export const tax = {
 };
 
 export const bot = {
+  // Returns string[] directly from backend — no wrapping object
   topics: () => backend<string[]>('/api/policy-bot/topics', { fallback: 'Could not load bot topics' }),
 
   ask: (question: string, language: string) =>

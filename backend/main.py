@@ -1,8 +1,13 @@
+import logging
+import os
 import uuid
+from contextlib import asynccontextmanager
+from typing import Optional
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import SQLAlchemyError
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 import bootstrap
 import scoring_client
@@ -57,16 +62,6 @@ app.add_middleware(
 )
 
 
-# Pydantic Schemas
-class TransactionCreate(BaseModel):
-    user_id: uuid.UUID
-    amount: float = Field(..., gt=0, description="Transaction amount in rupees")
-    transaction_type: str = Field(..., description="'debit' or 'payout'")
-    merchant: Optional[str] = None
-    threshold: Optional[float] = 100.0
-    mandate_limit: Optional[float] = 1000.0
-
-
 for router in ALL_ROUTERS:
     app.include_router(router)
 
@@ -98,32 +93,12 @@ def health_check() -> JSONResponse:
     """
     db_status = check_db_connection()
     status_code = status.HTTP_200_OK if db_status.get("status") == "connected" else status.HTTP_503_SERVICE_UNAVAILABLE
-    return {
-        "service_status": "healthy",
-        "database": db_status,
-    }
-
-
-@app.get("/api/transactions")
-def list_transactions(user_id: Optional[uuid.UUID] = None, limit: int = 50, db: Session = Depends(get_db)):
-    """Fetches transaction records from Supabase."""
-    return db_service.get_transactions(db, user_id=user_id, limit=limit)
-
-
-@app.post("/api/transactions", status_code=status.HTTP_201_CREATED)
-def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)):
-    """Ingests bank debits / platform payouts and evaluates savings sweep eligibility."""
-    if payload.transaction_type not in webhooks.WEBHOOK_TYPE_TO_LEDGER:
-        raise HTTPException(status_code=400, detail="transaction_type must be 'debit' or 'payout'")
-
-    result = db_service.add_transaction(
-        db=db,
-        user_id=payload.user_id,
-        amount=payload.amount,
-        transaction_type=webhooks.WEBHOOK_TYPE_TO_LEDGER[payload.transaction_type],
-        merchant=payload.merchant,
-        threshold=payload.threshold,
-        mandate_limit=payload.mandate_limit,
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "service_status": "healthy" if status_code == status.HTTP_200_OK else "degraded",
+            "database": db_status,
+        },
     )
 
 

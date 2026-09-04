@@ -51,7 +51,7 @@ def income_surplus(current: float, history: Iterable[float], percentage: float =
     """
     if current < 0 or not 0 <= percentage <= 1:
         raise ValueError("current must be non-negative and percentage must be between 0 and 1")
-    surplus = max(0.0, current - moving_average(history, window))
+    surplus = max(0.0, current - moving_average(history, DEFAULT_WINDOW))
     return round(surplus * percentage, 2)
 
 

@@ -97,7 +97,10 @@ export default function Insurance() {
                             option.indicative_monthly_premium_inr[1],
                           )}`
                         ) : (
-                          <Link to="/expenses">{t('dashboard.quickLog')}</Link>
+                          <>
+                            {option.premium_pct_of_weekly_payout[0]}–{option.premium_pct_of_weekly_payout[1]}%{' '}
+                            {t('insurance.premiumPctSuffix')} · <Link to="/expenses">{t('dashboard.quickLog')}</Link>
+                          </>
                         )}
                       </dd>
                     </div>

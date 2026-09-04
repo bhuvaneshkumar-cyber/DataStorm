@@ -27,6 +27,7 @@ from sqlalchemy import (
     String,
     Text,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import relationship
 
@@ -69,10 +70,14 @@ class User(Base):
     # Nullable so rows seeded before authentication existed still load; a null
     # hash cannot satisfy verify_password, so those accounts simply cannot log in.
     password_hash = Column(String, nullable=True)
-    role = Column(String, nullable=False, default=ROLE_WORKER)
+    # server_default (not just default=) so bootstrap.py's schema sync can
+    # backfill this column with a valid value when adding it to a users table
+    # that already has rows, and so a fresh table is correct even for a raw
+    # INSERT that bypasses the ORM.
+    role = Column(String, nullable=False, default=ROLE_WORKER, server_default=text(f"'{ROLE_WORKER}'"))
     # Preferred UI language (BCP-47 primary subtag). Stored server-side so the
     # choice follows the account to a new device instead of living in one browser.
-    language = Column(String, nullable=False, default="en")
+    language = Column(String, nullable=False, default="en", server_default=text("'en'"))
     # Free text, not an enum: employment type drives insurance advice, and the
     # gig economy invents new categories faster than a migration can keep up.
     employment_type = Column(String, nullable=True)

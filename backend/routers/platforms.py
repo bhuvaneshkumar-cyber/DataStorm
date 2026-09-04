@@ -20,7 +20,7 @@ import income_profile
 from database import get_db
 from deps import current_worker
 from models import PlatformAccount, User
-from schemas import IncomeProfile, PlatformAccountCreate, PlatformAccountOut
+from schemas import IncomeProfile, PlatformAccountCreate, PlatformAccountOut, PlatformAccountUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ def _owned_account(db: Session, user: User, account_id: uuid.UUID) -> PlatformAc
 @router.patch("/{account_id}", response_model=PlatformAccountOut)
 def update_platform(
     account_id: uuid.UUID,
-    payload: PlatformAccountCreate,
+    payload: PlatformAccountUpdate,
     user: User = Depends(current_worker),
     db: Session = Depends(get_db),
 ) -> PlatformAccount:

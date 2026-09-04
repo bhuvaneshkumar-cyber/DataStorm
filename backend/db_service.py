@@ -9,6 +9,7 @@ import uuid
 from typing import List, Optional, Tuple, Union
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
+from sqlalchemy.exc import SQLAlchemyError
 from models import TransactionRecord, SavingsSweepRecord
 from savings import (
     SweepDecision,
@@ -16,8 +17,14 @@ from savings import (
     moving_average,
     round_up,
     sweep_decision,
+    DEFAULT_WINDOW,
 )
 from webhooks import WebhookEvent
+
+logger = logging.getLogger(__name__)
+
+UserId = Union[str, uuid.UUID]
+INCOME_WINDOW = DEFAULT_WINDOW
 
 # A transaction's contribution is counted toward the next sweep until a sweep
 # claims it, at which point its status flips. This is the SQL equivalent of the
@@ -127,6 +134,7 @@ def add_transaction(
     amount: float,
     transaction_type: str,
     merchant: Optional[str] = None,
+    category: Optional[str] = None,
     threshold: float = 100.0,
     mandate_limit: float = 1000.0,
 ) -> dict:
@@ -141,6 +149,7 @@ def add_transaction(
         amount=amount,
         transaction_type=transaction_type,
         merchant=merchant,
+        category=category,
         status=STATUS_PENDING,
     )
     db.add(record)
@@ -149,7 +158,7 @@ def add_transaction(
     roundups, surplus, _ = get_pending_contributions(db, user_id)
     decision = sweep_decision(roundups, surplus, threshold, mandate_limit)
 
-    return {
+    result = {
         "transaction_id": str(record.id),
         "amount": float(record.amount),
         "transaction_type": record.transaction_type,
@@ -161,6 +170,15 @@ def add_transaction(
             "reason": decision.reason,
         },
     }
+
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Failed to record transaction for user %s", user_id)
+        raise
+
+    return result
 
 
 def execute_sweep(

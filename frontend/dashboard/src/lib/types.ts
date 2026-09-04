@@ -103,6 +103,7 @@ export type DashboardStats = {
   user_id: string;
   total_stash_balance: number;
   income_30d_baseline: number;
+  pending_contributions: number;
   recent_sweeps: Sweep[];
 };
 

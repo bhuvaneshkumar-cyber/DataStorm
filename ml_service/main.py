@@ -83,7 +83,7 @@ app.add_middleware(
 
 @app.get("/health")
 def health() -> dict:
-    """Liveness, plus whether the ML path is available (rules always are)."""
+    """Liveness, plus which optional capabilities this deployment actually has."""
     ready = pipeline is not None and pipeline.is_ready
     return {
         "status": "ok",
@@ -92,6 +92,7 @@ def health() -> dict:
         # Held-out accuracy from startup training - surfaced so a demo can show
         # the model is actually learning, not just responding.
         "holdout_accuracy": pipeline.holdout_accuracy if pipeline else None,
+        "ingestion_formats": document_ingestion.available_formats(),
     }
 
 
@@ -129,18 +130,6 @@ def _score(applicant: CreditScoreRequest) -> CreditScoreResponse:
         risk_assessment=risk_policy.assess(final_score, applicant, ml_available),
         latency_ms=round((time.perf_counter() - start) * 1000, 2),
     )
-
-
-@app.get("/health")
-def health() -> dict:
-    """Liveness, plus which optional capabilities this deployment actually has."""
-    ready = pipeline is not None and pipeline.is_ready
-    return {
-        "status": "ok",
-        "ml_model_loaded": ready,
-        "mode": "hybrid" if ready else "rules_only",
-        "ingestion_formats": document_ingestion.available_formats(),
-    }
 
 
 @app.post("/predict-credit-score", response_model=CreditScoreResponse)

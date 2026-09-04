@@ -6,6 +6,7 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic==2.10.4
+email-validator==2.2.0
 
 # Supabase PostgreSQL access. SQLAlchemy 2.0.x is what database.py's
 # declarative_base / sessionmaker usage targets; psycopg2-binary ships a wheel so
@@ -13,6 +14,8 @@ pydantic==2.10.4
 sqlalchemy==2.0.36
 psycopg2-binary==2.9.10
 python-dotenv==1.0.1
+httpx==0.28.1
+PyJWT==2.10.1
 
 # Test-only, pinned so one `pip install -r` gives a runnable suite.
 pytest==8.3.4

@@ -13,6 +13,7 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - ML_SERVICE_URL=http://ml_service:8001
     env_file:
       - .env
     volumes:
@@ -42,9 +43,8 @@ services:
     environment:
       # Resolved in the browser, not inside the container network - must be
       # host-reachable URLs, not Docker service names.
-      - VITE_FINANCIAL_API_URL=http://localhost:8000
-      - VITE_ML_API_URL=http://localhost:8001
-      - VITE_DASHBOARD_USER_ID=${VITE_DASHBOARD_USER_ID}
+      - VITE_BACKEND_URL=http://localhost:8000
+      - VITE_ML_URL=http://localhost:8001
     env_file:
       - .env
     volumes:

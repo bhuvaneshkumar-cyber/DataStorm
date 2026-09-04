@@ -12,6 +12,7 @@ numpy==2.2.6
 pandas==2.2.3
 scikit-learn==1.6.1
 shap==0.48.0
+python-multipart==0.0.20
 # Test-only, but pinned here so one `pip install -r` gives a runnable suite:
 # fastapi.testclient needs httpx at import time.
 httpx==0.28.1

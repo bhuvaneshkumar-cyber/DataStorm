@@ -70,7 +70,7 @@ export default function Loans() {
               <StatTile
                 label={t('dashboard.score')}
                 value={Math.round(verdict.credit_score)}
-                hint={`${t('loans.notEligible')} < ${verdict.threshold}`}
+                hint={`${t('loans.threshold')}: ${verdict.threshold}`}
                 tone={verdict.eligible ? 'positive' : 'warning'}
               />
               <StatTile

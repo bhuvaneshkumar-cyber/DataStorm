@@ -180,6 +180,7 @@ class DashboardStats(BaseModel):
     user_id: str
     total_stash_balance: float
     income_30d_baseline: float
+    pending_contributions: float
     recent_sweeps: list[SweepOut]
 
 
@@ -190,6 +191,17 @@ class DashboardStats(BaseModel):
 
 class PlatformAccountCreate(BaseModel):
     platform: str = Field(..., min_length=1, max_length=60)
+    account_handle: Optional[str] = Field(None, max_length=120)
+    customer_rating: Optional[float] = Field(None, ge=1.0, le=5.0)
+    weekly_payout: Optional[float] = Field(None, ge=0.0)
+    gigs_per_week: Optional[float] = Field(None, ge=0.0, le=500.0)
+    hours_per_week: Optional[float] = Field(None, ge=0.0, le=120.0)
+
+
+class PlatformAccountUpdate(BaseModel):
+    """Every field optional: this is a patch, and an omitted field means leave it."""
+
+    platform: Optional[str] = Field(None, min_length=1, max_length=60)
     account_handle: Optional[str] = Field(None, max_length=120)
     customer_rating: Optional[float] = Field(None, ge=1.0, le=5.0)
     weekly_payout: Optional[float] = Field(None, ge=0.0)

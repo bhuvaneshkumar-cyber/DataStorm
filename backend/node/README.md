@@ -1,6 +1,6 @@
 # GigSave Node.js Backend
 
-GigSave is an Express and Mongoose backend for a gig-worker resilience savings
+GigSave is an Express and Supabase backend for a gig-worker resilience savings
 workflow. It accepts bank debit and platform payout webhooks, calculates
 round-up or income-smoothing contributions, accumulates pending savings, and
 authorizes a sweep when the minimum threshold and mandate cap allow it.
@@ -14,7 +14,7 @@ backend/node/
 │   ├── server.js                 HTTP server entry point
 │   ├── config/                   Configuration and database placeholders
 │   ├── listeners/webhookListener.js
-│   ├── models/                   Mongoose models
+│   ├── models/                   Supabase persistence adapters
 │   ├── routes/webhookRoutes.js   Authenticated webhook routes
 │   ├── services/savingsEngine.js Savings calculations and persistence flow
 │   └── utils/
@@ -25,7 +25,7 @@ backend/node/
 
 ## Install and run
 
-Prerequisites: Node.js 18 or newer and a local MongoDB instance.
+Prerequisites: Node.js 18 or newer and a Supabase project.
 
 ```powershell
 cd backend/node
@@ -43,17 +43,19 @@ Create `backend/node/.env` with:
 ```dotenv
 PORT=3001
 WEBHOOK_SECRET=replace-with-a-long-random-secret
-MONGODB_URI=mongodb://127.0.0.1:27017/gigsave
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=replace-with-your-server-only-key
 ```
 
-`WEBHOOK_SECRET` is required for webhook requests. `MONGODB_URI` (or the
-legacy alias `MONGO_URI`) identifies the database and enables database status
-on `/health`. The current project uses local MongoDB; the database connection
-helper is still being integrated into server startup.
+`WEBHOOK_SECRET` is required for webhook requests. `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` enable the server-side Supabase client and report
+`supabase: "configured"` on `/health`. Never expose the service-role key in
+browser code. Run `supabase/001_node_savings_schema.sql` in the Supabase SQL
+editor before using the Node webhook routes.
 
 ## Tests
 
-Tests mock Mongoose models and the savings engine where appropriate, so they do
+Tests mock persistence adapters and the savings engine where appropriate, so they do
 not require a running database.
 
 ```powershell
@@ -106,11 +108,10 @@ processing or database failures return `500` with an error message.
 ## Health check
 
 `GET /health` is unauthenticated and returns `status`, process `uptime`, and an
-ISO `timestamp`. When `MONGODB_URI` or `MONGO_URI` is configured it also
-returns `db` as `connected` or `disconnected` without attempting a connection.
+ISO `timestamp`. It also returns `supabase` as `configured` or `not configured`.
 
 ## Demo database note
 
-This backend currently uses a local MongoDB setup. Before the demo, the team
-must confirm a shared MongoDB Atlas connection string, credentials, network
-access, and the final environment-variable name.
+The Node savings workflow now targets Supabase PostgreSQL. Before the demo,
+the team should confirm the shared Supabase project, PostgreSQL tables, service
+credentials, row-level-security policy, and that the schema migration is applied.

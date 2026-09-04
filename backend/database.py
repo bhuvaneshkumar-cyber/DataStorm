@@ -24,14 +24,15 @@ if not DATABASE_URL:
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Configure SQLAlchemy Engine with pooling for Supabase connection pooler
+# Configure SQLAlchemy Engine with pooling for Supabase connection pooler.
+# Supabase requires TLS for database connections.
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,       # Automatically checks if connection is alive before using
     pool_recycle=300,         # Recycle connections every 5 minutes
     pool_size=10,             # Keep 10 persistent connections in pool
     max_overflow=20,          # Allow up to 20 temporary overflow connections
-    connect_args={"connect_timeout": 10},
+    connect_args={"connect_timeout": 10, "sslmode": "require"},
 )
 
 

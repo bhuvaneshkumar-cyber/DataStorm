@@ -7,7 +7,7 @@ require('dotenv').config();
 
 const express        = require('express');
 const bodyParser     = require('body-parser');
-const mongoose       = require('mongoose');
+const { isConfigured: supabaseConfigured } = require('./config/supabase');
 const webhookRoutes  = require('./routes/webhookRoutes');
 
 const app = express();
@@ -40,9 +40,7 @@ app.get('/health', (_req, res) => {
     timestamp: new Date().toISOString(),
   };
 
-  if (process.env.MONGODB_URI || process.env.MONGO_URI) {
-    health.db = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
-  }
+  health.supabase = supabaseConfigured ? 'configured' : 'not configured';
 
   return res.json(health);
 });
@@ -62,15 +60,6 @@ app.use((err, _req, res, _next) => {
     return res.status(400).json({ error: 'Malformed JSON request body.' });
   }
   res.status(500).json({ error: 'Internal server error.' });
-});
-app.use('/webhooks', webhookRoutes);
-
-app.use((err, _req, res, _next) => {
-  console.error('[app] Unhandled error:', err);
-  if (err instanceof SyntaxError && err.status === 400 && err.type === 'entity.parse.failed') {
-    return res.status(400).json({ error: 'Malformed JSON request body.' });
-  }
-  return res.status(500).json({ error: 'Internal server error.' });
 });
 
 module.exports = app;

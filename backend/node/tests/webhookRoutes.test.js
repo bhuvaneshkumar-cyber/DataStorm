@@ -136,13 +136,13 @@ describe('GET /health', () => {
     expect(response.body.db).toBeUndefined();
   });
 
-  test('reports a configured but disconnected database without throwing', async () => {
+  test('reports Supabase as configured without throwing', async () => {
     process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017/gigsave-test';
     delete process.env.MONGO_URI;
 
     const response = await request(app).get('/health');
 
     expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({ status: 'ok', db: 'disconnected' });
+    expect(response.body).toMatchObject({ status: 'ok', supabase: 'configured' });
   });
 });

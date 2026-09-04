@@ -445,3 +445,119 @@ img { display: block; max-width: 100%; }
     transition-duration: .01ms !important;
   }
 }
+
+/* Glassmorphism surface treatment */
+:root {
+  --background: 168 38% 94%;
+  --border: 164 28% 82%;
+  --card-border: 0 0% 100%;
+  --primary: 173 67% 31%;
+  --secondary: 164 45% 90%;
+  --muted: 165 30% 92%;
+  --accent: 42 92% 67%;
+  --shadow-sm: 0 12px 30px rgba(27, 78, 70, .08);
+  --shadow-md: 0 18px 42px rgba(27, 78, 70, .13);
+  --shadow-lg: 0 24px 60px rgba(22, 63, 57, .18);
+}
+
+.dashboard-shell {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 8% 8%, rgba(255, 255, 255, .92), transparent 24rem),
+    radial-gradient(circle at 94% 12%, rgba(164, 222, 204, .72), transparent 29rem),
+    linear-gradient(135deg, #eaf5f0 0%, #d9ece7 48%, #f3f6ed 100%);
+}
+
+.dashboard-shell::before,
+.dashboard-shell::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  border: 1px solid rgba(255, 255, 255, .58);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.dashboard-shell::before {
+  width: 360px;
+  height: 360px;
+  top: 18%;
+  left: -170px;
+  background: rgba(255, 255, 255, .16);
+}
+
+.dashboard-shell::after {
+  width: 520px;
+  height: 520px;
+  right: -260px;
+  bottom: -220px;
+  background: rgba(189, 229, 213, .2);
+}
+
+.app-header,
+.card,
+.header-popover,
+.demo-menu,
+.modal,
+.sidebar {
+  background: rgba(255, 255, 255, .57);
+  border-color: rgba(255, 255, 255, .72);
+  box-shadow: var(--shadow-sm);
+  -webkit-backdrop-filter: blur(22px) saturate(135%);
+  backdrop-filter: blur(22px) saturate(135%);
+}
+
+.app-header {
+  background: rgba(244, 252, 248, .66);
+}
+
+.card:hover {
+  border-color: rgba(255, 255, 255, .94);
+}
+
+.stash-card,
+.coach-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, .68), rgba(224, 244, 237, .46));
+}
+
+.coach-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, .7), rgba(244, 239, 211, .52));
+}
+
+.stash-card::after,
+.coach-card::before {
+  background: rgba(255, 255, 255, .28);
+}
+
+.primary-button {
+  background: #176f67;
+  border-color: #176f67;
+  box-shadow: 0 10px 22px rgba(23, 111, 103, .22);
+}
+
+.primary-button:hover {
+  background: #105c55;
+}
+
+.secondary-button {
+  background: rgba(255, 255, 255, .46);
+  border-color: rgba(255, 255, 255, .82);
+  color: #176f67;
+}
+
+.score-ring {
+  background: conic-gradient(#176f67 0 74.2%, rgba(255, 255, 255, .5) 74.2% 100%);
+}
+
+.score-ring::after {
+  background: rgba(245, 252, 249, .86);
+}
+
+.modal-scrim,
+.sidebar-backdrop {
+  background: rgba(20, 67, 60, .2);
+  -webkit-backdrop-filter: blur(9px);
+  backdrop-filter: blur(9px);
+}

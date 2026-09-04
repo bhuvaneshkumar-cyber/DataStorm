@@ -10,7 +10,8 @@ require('dotenv').config();
 module.exports = {
   port: Number(process.env.PORT) || 3001,
   nodeEnv: process.env.NODE_ENV || 'development',
-  mongoUri: process.env.MONGO_URI || 'mongodb://localhost:27017/gigsave',
+  supabaseUrl: process.env.SUPABASE_URL || '',
+  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
   webhookSecret: process.env.WEBHOOK_SECRET || '',
 
   // Mirrors the SavingsEngine defaults in savings.py / savingsEngine.js.

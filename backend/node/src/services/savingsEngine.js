@@ -13,7 +13,7 @@
  * Architecture rule enforced here
  * ────────────────────────────────
  * Every exported function except processContribution() is a PURE FUNCTION:
- *   - No imports from Mongoose or any DB driver.
+ *   - No imports from a database driver.
  *   - No side effects (no writes, no reads, no global mutation).
  *   - Deterministic: same inputs → same outputs, always.
  *
@@ -332,7 +332,7 @@ function meetsMinimumThreshold(pendingContributionTotal, minimumThreshold = DEFA
  *   The user's application-level UUID. Used to look up Stash + IncomeProfile.
  *
  * @param {object} params.transaction
- *   A plain object (or Mongoose Transaction document) with at minimum:
+ *   A plain object (or persisted Transaction record) with at minimum:
  *     { transactionId: string, type: "debit"|"payout", amount: number }
  *   Must NOT already have isProcessed=true.
  *
